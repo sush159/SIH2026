@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="ResilientGuard Field Officer Portal — SDRF & Ground Patrol: Task Verification, Hardware Maintenance, Offline Observations & Tactical Navigation Map.">
+  <title>ResilientGuard — Field Officer Patrol Console</title>
+
+  <!-- Google Fonts: Plus Jakarta Sans & JetBrains Mono -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+
+  <!-- Leaflet CSS for Field Tactical Map -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+
+  <!-- Field Officer Stylesheet -->
+  <link rel="stylesheet" href="field.css">
+</head>
+<body>
+
+  <!-- =====================================================================
+       TOP FIELD COMMAND BAR
+       ===================================================================== -->
+  <header class="field-header">
+    <div class="field-brand-wrap">
+      <div class="field-badge-icon">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+          <circle cx="12" cy="12" r="10"/>
+          <polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/>
+        </svg>
+      </div>
+      <div>
+        <div style="display: flex; align-items: center; gap: 6px;">
+          <span class="field-brand-title">ResilientGuard</span>
+          <span class="field-role-tag">Field Patrol</span>
+        </div>
+        <div class="field-officer-id">Officer #104 (SDRF Chamoli QRT)</div>
+      </div>
+    </div>
+
+    <!-- Navigation Tab Bar -->
+    <nav class="field-nav-tabs">
+      <button type="button" class="field-tab-btn active" id="tabBtnPage1" onclick="switchFieldPage('page1')">
+        Tasks
+        <span class="tab-badge-count" id="taskCountBadge">5</span>
+      </button>
+      <button type="button" class="field-tab-btn" id="tabBtnPage2" onclick="switchFieldPage('page2')">
+        Task Detail
+      </button>
+      <button type="button" class="field-tab-btn" id="tabBtnPage3" onclick="switchFieldPage('page3')">
+        Log Finding
+      </button>
+      <button type="button" class="field-tab-btn" id="tabBtnPage4" onclick="switchFieldPage('page4')">
+        Tactical Map
+      </button>
+    </nav>
+
+    <!-- Header Actions & Offline Sync Indicator -->
+    <div class="field-header-actions">
+      <div class="field-sync-pill" id="fieldSyncPill" title="Mesh Sync Active">
+        <span class="sync-dot"></span>
+        <span id="fieldSyncStatusText">Mesh Online</span>
+      </div>
+
+      <a href="admin.html" class="btn-field-link" title="DDMA Admin">
+        DDMA Admin
+      </a>
+
+      <a href="login.html" class="btn-field-link btn-logout" title="Sign out">
+        Logout
+      </a>
+    </div>
+  </header>
+
+  <!-- =====================================================================
+       PAGE 1 — ASSIGNED TASKS
+       ===================================================================== -->
+  <main class="field-page-view active" id="viewFieldPage1">
+    <div class="field-container">
+      
+      <!-- Quick Status & Filters Bar -->
+      <div class="field-filter-bar">
+        <div class="filter-pills-row">
+          <button type="button" class="filter-pill active" onclick="filterTasks('all', this)">All (5)</button>
+          <button type="button" class="filter-pill" onclick="filterTasks('hardware', this)">Hardware (2)</button>
+          <button type="button" class="filter-pill" onclick="filterTasks('citizen', this)">Citizen Reports (2)</button>
+          <button type="button" class="filter-pill" onclick="filterTasks('zone', this)">Zone Check (1)</button>
+        </div>
+        <div class="sort-tag-text">Sort: <strong>Proximity &amp; Urgency</strong></div>
+      </div>
+
+      <!-- Tasks List Container -->
+      <div class="tasks-list-grid" id="tasksListContainer">
+        <!-- Dynamically populated by field.js -->
+      </div>
+
+    </div>
+  </main>
+
+  <!-- =====================================================================
+       PAGE 2 — REPORT / TASK DETAIL
+       ===================================================================== -->
+  <main class="field-page-view" id="viewFieldPage2">
+    <div class="field-container">
+      
+      <!-- Top Ribbon -->
+      <div class="detail-top-ribbon">
+        <button type="button" class="btn-field-link" onclick="switchFieldPage('page1')">
+          ← Back to Tasks
+        </button>
+        <span class="detail-task-id-tag" id="detailTaskIdBadge">TASK #101</span>
+      </div>
+
+      <!-- Task Detail Card -->
+      <div class="field-card" id="taskDetailCard">
+        
+        <!-- Header Info -->
+        <div class="task-detail-header">
+          <div>
+            <div class="task-type-sub" id="detailTaskTypeLabel">HARDWARE MAINTENANCE</div>
+            <h2 class="task-detail-title" id="detailTaskTitle">Gateway GW-04 Offline Inspection</h2>
+            <div class="task-meta-line" id="detailTaskMeta">
+              Sector 4 Upper Slope • 0.4 km NW • 30.5592° N, 79.5620° E
+            </div>
+          </div>
+          <div id="detailTaskUrgencyContainer">
+            <span class="status-pill critical">CRITICAL / SILENT SPIKE</span>
+          </div>
+        </div>
+
+        <!-- Task Specific Body Content -->
+        <div class="task-content-body" id="taskContentBody">
+          <!-- Dynamically populated -->
+        </div>
+
+        <!-- Officer Field Action & Verification Form -->
+        <div class="field-action-section">
+          <h4 class="action-section-title">Field Verification &amp; Resolution</h4>
+          
+          <div class="form-group">
+            <label class="form-label" for="fieldActionNotes">Patrol Inspection Notes:</label>
+            <textarea class="form-textarea" id="fieldActionNotes" rows="2" placeholder="Visual observations, crack width, or hardware condition..."></textarea>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Attach Ground Photo:</label>
+            <div class="photo-upload-box" onclick="document.getElementById('taskPhotoInput').click()">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+                <circle cx="12" cy="13" r="4"/>
+              </svg>
+              <span id="taskPhotoInputLabel">Attach field photo</span>
+              <input type="file" id="taskPhotoInput" accept="image/*" style="display:none;" onchange="handleTaskPhotoUpload(this)">
+            </div>
+          </div>
+
+          <!-- Dynamic Action Buttons -->
+          <div class="task-action-btn-row" id="taskActionBtnContainer">
+            <!-- Dynamically populated -->
+          </div>
+        </div>
+
+      </div>
+
+    </div>
+  </main>
+
+  <!-- =====================================================================
+       PAGE 3 — SUBMIT OBSERVATION
+       ===================================================================== -->
+  <main class="field-page-view" id="viewFieldPage3">
+    <div class="field-container" style="max-width: 800px;">
+      
+      <div class="field-card">
+        <div class="field-card-header-clean">
+          <div>
+            <h2>Log Field Observation</h2>
+            <p style="font-size: 0.8rem; color: var(--text-muted); margin-top: 2px;">
+              Record ground hazard. Automatically buffered offline and synched via mesh.
+            </p>
+          </div>
+          <span class="status-pill open" id="offlineBufferStatus">Buffer Ready</span>
+        </div>
+
+        <form id="observationForm" onsubmit="submitFieldObservation(event)">
+          
+          <!-- Auto-Filled GPS Location -->
+          <div class="form-group">
+            <label class="form-label">GPS Location (Auto-detected):</label>
+            <div class="gps-readout-box">
+              <div style="display: flex; align-items: center; gap: 8px;">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#16a34a" stroke-width="2.5">
+                  <circle cx="12" cy="12" r="10"/>
+                  <circle cx="12" cy="12" r="3"/>
+                </svg>
+                <span id="obsGpsText" style="font-family: var(--font-main); font-weight: 700; font-size: 0.82rem;">30.5564° N, 79.5638° E (1,890m MSL • ±3m)</span>
+              </div>
+              <button type="button" class="btn-refresh-gps" onclick="refreshFieldGps()" title="Refresh GPS">
+                Refresh GPS
+              </button>
+            </div>
+          </div>
+
+          <!-- Quick-Select Hazard Tags -->
+          <div class="form-group">
+            <label class="form-label">Hazard Tags (Select all that apply):</label>
+            <div class="hazard-chips-grid">
+              <button type="button" class="hazard-chip active" data-tag="Tension Crack" onclick="toggleHazardChip(this)">
+                Tension Crack
+              </button>
+              <button type="button" class="hazard-chip" data-tag="Water Seepage" onclick="toggleHazardChip(this)">
+                Water Seepage
+              </button>
+              <button type="button" class="hazard-chip" data-tag="Soil Creep" onclick="toggleHazardChip(this)">
+                Soil Creep
+              </button>
+              <button type="button" class="hazard-chip" data-tag="Road Blocked" onclick="toggleHazardChip(this)">
+                Road Blocked
+              </button>
+              <button type="button" class="hazard-chip" data-tag="Hardware Issue" onclick="toggleHazardChip(this)">
+                Damaged Sensor / Gateway
+              </button>
+              <button type="button" class="hazard-chip" data-tag="Rockfall Debris" onclick="toggleHazardChip(this)">
+                Rockfall Debris
+              </button>
+              <button type="button" class="hazard-chip" data-tag="Retaining Wall" onclick="toggleHazardChip(this)">
+                Retaining Wall Bulge
+              </button>
+            </div>
+          </div>
+
+          <!-- Severity Rating -->
+          <div class="form-group">
+            <label class="form-label">Urgency &amp; Severity:</label>
+            <div class="severity-radio-group">
+              <label class="severity-radio-label critical">
+                <input type="radio" name="obsSeverity" value="critical" checked>
+                <span>Critical / Immediate</span>
+              </label>
+              <label class="severity-radio-label warning">
+                <input type="radio" name="obsSeverity" value="high">
+                <span>Elevated Watch</span>
+              </label>
+              <label class="severity-radio-label info">
+                <input type="radio" name="obsSeverity" value="moderate">
+                <span>Routine Note</span>
+              </label>
+            </div>
+          </div>
+
+          <!-- Observation Photo Attachment -->
+          <div class="form-group">
+            <label class="form-label">Ground Photo:</label>
+            <div class="photo-upload-box" onclick="document.getElementById('obsPhotoFile').click()">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+                <circle cx="12" cy="13" r="4"/>
+              </svg>
+              <span id="obsPhotoLabel">Tap to attach photo</span>
+              <input type="file" id="obsPhotoFile" accept="image/*" style="display:none;" onchange="handleObsPhotoUpload(this)">
+            </div>
+          </div>
+
+          <!-- Descriptive Notes -->
+          <div class="form-group">
+            <label class="form-label" for="obsNotesInput">Field Notes (Optional):</label>
+            <textarea class="form-textarea" id="obsNotesInput" rows="2" placeholder="e.g. 3.2m crack along road edge, 8cm wide with water runoff..."></textarea>
+          </div>
+
+          <!-- Submit Button -->
+          <div style="margin-top: 14px;">
+            <button type="submit" class="btn-field-submit">
+              Submit Observation to DDMA Command
+            </button>
+          </div>
+
+        </form>
+      </div>
+
+    </div>
+  </main>
+
+  <!-- =====================================================================
+       PAGE 4 — FIELD TACTICAL MAP
+       ===================================================================== -->
+  <main class="field-page-view" id="viewFieldPage4">
+    <div class="field-map-container">
+      
+      <!-- Tactical Leaflet Map Canvas -->
+      <div id="fieldTacticalMap"></div>
+
+      <!-- Map Floating Top Overlay -->
+      <div class="field-map-top-bar">
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <span style="font-size: 0.78rem; font-weight: 700; color: var(--text-primary);">Target:</span>
+          <select class="field-map-select" id="mapTargetSelect" onchange="focusMapTarget(this.value)">
+            <option value="my-location" selected>My Patrol Location (Sector 4)</option>
+            <option value="gw-04">Gateway GW-04 (Offline • Sector 4)</option>
+            <option value="sn-401">Inclinometer SN-401</option>
+            <option value="report-904">Citizen Report #904 (Crack)</option>
+            <option value="nh7-km42">NH-7 Km 42 Blockade</option>
+            <option value="gw-02">Gateway GW-02 (Helang)</option>
+          </select>
+        </div>
+
+        <button type="button" class="btn-locate-gps" onclick="recenterOnOfficerLocation()">
+          Center GPS
+        </button>
+      </div>
+
+      <!-- Floating Map Legend -->
+      <div class="field-map-legend">
+        <span><strong style="color: #2563eb;">●</strong> My GPS</span>
+        <span><strong style="color: #dc2626;">✖</strong> Tasks</span>
+        <span><strong style="color: #16a34a;">▲</strong> Sensors</span>
+        <span><strong style="color: #be123c;">■</strong> Silent Gateway</span>
+        <span><strong style="color: #d97706;">▱</strong> Zones</span>
+      </div>
+
+    </div>
+  </main>
+
+  <!-- Field Operational Toast Notification -->
+  <div class="field-toast" id="fieldToast"></div>
+
+  <!-- Leaflet JS -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+
+  <!-- Field Officer Application Logic -->
+  <script src="field.js"></script>
+</body>
+</html>

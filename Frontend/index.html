@@ -1,0 +1,1133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Citizen Early Warning & Area Safety Portal - Real-time disaster risk intelligence, monitored commute corridors, interactive map, and offline-capable reporting.">
+  <title>ResilientGuard — Citizen Early Warning & Area Safety Portal</title>
+
+  <!-- Google Fonts: Plus Jakarta Sans & JetBrains Mono -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+
+  <!-- Leaflet CSS for Interactive Geospatial Map -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+
+  <!-- Main Design System Stylesheet -->
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+  <!-- =====================================================================
+       APP CONTAINER
+       ===================================================================== -->
+  <div class="app-container">
+
+    <!-- Brand Header -->
+    <header class="app-header">
+      <div class="brand-section">
+        <div class="brand-logo-icon">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+            <path d="M12 8v4"/>
+            <path d="M12 16h.01"/>
+          </svg>
+        </div>
+        <div class="brand-text">
+          <h1 data-i18n="appTitle">ResilientGuard</h1>
+          <span data-i18n="appSubtitle">Citizen Disaster Early Warning & Area Safety</span>
+        </div>
+      </div>
+
+      <div class="header-right">
+        <!-- Field Officer Portal Link -->
+        <a href="field.html" class="admin-dispatch-trigger-btn" style="text-decoration: none; background: rgba(37, 99, 235, 0.15); border-color: #2563eb; color: #60a5fa;" title="Open Field Officer Patrol Console">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="margin-right: 4px;">
+            <circle cx="12" cy="12" r="10"/>
+            <polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/>
+          </svg>
+          <span>Field Patrol</span>
+        </a>
+
+        <!-- Admin Command Center Link -->
+        <a href="admin.html" class="admin-dispatch-trigger-btn" style="text-decoration: none; background: linear-gradient(135deg, #7f1d1d, #991b1b); border-color: #ef4444; color: #fef2f2;" title="Open DDMA Disaster Authority Command Center">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="margin-right: 4px;">
+            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+          </svg>
+          <span>DDMA Admin</span>
+        </a>
+
+        <!-- Portal / Role Switcher -->
+        <a href="login.html" class="admin-dispatch-trigger-btn" style="text-decoration: none;" title="Switch Role / Login Gateway">
+          <span>Switch Portal</span>
+        </a>
+
+        <!-- Admin Dispatch Simulator Modal Trigger (Inline simulation) -->
+        <button class="admin-dispatch-trigger-btn" id="btnOpenAdminDispatch" style="display: none;" title="Simulate Admin Live Emergency Broadcast">
+          <span class="admin-broadcast-icon">📡</span>
+          <span>Admin Live Alert</span>
+        </button>
+
+        <!-- Location Selector Chip -->
+        <button class="location-chip" id="locationSelectorBtn" title="Change or detect location">
+          <span class="gps-pulse"></span>
+          <span id="headerLocationName">Chamoli Sector 4, Uttarakhand</span>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="6 9 12 15 18 9"></polyline>
+          </svg>
+        </button>
+
+        <!-- Language Switcher (Small, Top Corner) -->
+        <div class="lang-switch">
+          <button class="lang-btn active" id="langEnBtn" data-lang="en">EN</button>
+          <button class="lang-btn" id="langHiBtn" data-lang="hi">हिन्दी</button>
+        </div>
+      </div>
+    </header>
+
+    <!-- Contextual / Dynamic Banners (Offline & Cold-Start) -->
+    <section class="banner-container" id="bannerContainer">
+      <!-- Offline Banner -->
+      <div class="notice-banner offline" id="offlineBanner" style="display: none;">
+        <div class="banner-content">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="1" y1="1" x2="23" y2="23"></line>
+            <path d="M16.72 11.06A10.94 10.94 0 0 1 19 12.55"></path>
+            <path d="M5 12.55a10.94 10.94 0 0 1 5.17-2.39"></path>
+            <path d="M10.71 5.05A16 16 0 0 1 22.58 9"></path>
+            <path d="M1.42 9a15.91 15.91 0 0 1 4.7-2.88"></path>
+            <path d="M8.53 16.11a6 6 0 0 1 6.95 0"></path>
+            <line x1="12" y1="20" x2="12.01" y2="20"></line>
+          </svg>
+          <span id="offlineBannerText" data-i18n="offlineNotice">Showing cached data from 12:40 PM — reconnecting to local mesh...</span>
+        </div>
+        <button class="banner-action-btn" id="retrySyncBtn" data-i18n="retrySync">Retry Sync</button>
+      </div>
+
+      <!-- Cold-Start Data Banner -->
+      <div class="notice-banner coldstart" id="coldStartBanner" style="display: none;">
+        <div class="banner-content">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10"></circle>
+            <line x1="12" y1="8" x2="12" y2="12"></line>
+            <line x1="12" y1="16" x2="12.01" y2="16"></line>
+          </svg>
+          <span id="coldStartBannerText" data-i18n="coldStartNotice">Limited local sensor telemetry — monitoring secondary satellite feeds closely</span>
+        </div>
+        <button class="banner-action-btn" id="dismissColdStartBtn" data-i18n="dismiss">Dismiss</button>
+      </div>
+    </section>
+
+    <!-- Main Navigation Bar -->
+    <nav class="main-nav-bar" id="mainNavBar">
+      <button class="nav-tab-item active" data-tab="home" id="navHome">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+          <polyline points="9 22 9 12 15 12 15 22"/>
+        </svg>
+        <span data-i18n="navMyArea">My Area</span>
+      </button>
+
+      <button class="nav-tab-item" data-tab="map" id="navMap">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"/>
+          <line x1="8" y1="2" x2="8" y2="18"/>
+          <line x1="16" y1="6" x2="16" y2="22"/>
+        </svg>
+        <span data-i18n="navMap">Live Map</span>
+      </button>
+
+      <button class="nav-tab-item" data-tab="alerts" id="navAlerts">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>
+          <path d="M13.73 21a2 2 0 0 1-3.46 0"/>
+        </svg>
+        <span data-i18n="navAlerts">Alerts</span>
+        <span class="nav-badge" id="alertCountBadge">2</span>
+      </button>
+
+      <button class="nav-tab-item" data-tab="report" id="navReport">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+          <circle cx="12" cy="13" r="4"/>
+        </svg>
+        <span data-i18n="navReport">Report Hazard</span>
+      </button>
+    </nav>
+
+    <!-- =====================================================================
+         MAIN SCREEN VIEWPORTS
+         ===================================================================== -->
+    <main class="main-content">
+
+      <!-- =================================================================
+           SCREEN 1: MY AREA (HOME)
+           ================================================================= -->
+      <section class="screen-view active" id="screenHome">
+        <div class="home-grid">
+          
+          <!-- Left Column: Primary Hazard Status -->
+          <div class="home-main-col">
+            
+            <!-- Hero Risk Card -->
+            <article class="hero-risk-card safe" id="heroRiskCard">
+              <div class="hero-top-row">
+                <div class="location-info">
+                  <h2 id="homeLocationTitle">Chamoli — Joshimath Sector</h2>
+                  <div class="sub-loc">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path>
+                      <circle cx="12" cy="10" r="3"></circle>
+                    </svg>
+                    <span id="homeLocationSub">Auto-detected Location</span>
+                  </div>
+                </div>
+
+                <!-- Status Badge: Level, Color + Icon -->
+                <div class="risk-status-badge safe" id="homeRiskBadge">
+                  <span class="risk-icon-wrap" id="homeRiskIcon">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+                      <polyline points="9 12 11 14 15 10"/>
+                    </svg>
+                  </span>
+                  <span id="homeRiskLevelText">SAFE</span>
+                </div>
+              </div>
+
+              <!-- One-line plain language reason -->
+              <div class="risk-reason-box">
+                <div class="reason-header" data-i18n="primaryReasonHeader">Primary Factor</div>
+                <div class="reason-text" id="homeRiskReason">
+                  Rainfall, terrain slope data, and satellite-derived soil wetness for this sector are within normal safety thresholds. No unusual land movement detected in recent observations.
+                </div>
+                <!-- Trend line below Primary Factor text -->
+                <div class="trend-line" id="homeTrendLine" style="margin-top: 8px; font-size: 0.8rem; color: var(--text-muted); display: flex; align-items: center; gap: 6px;">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
+                  </svg>
+                  <span id="homeTrendLineText" data-i18n="trendLineText">Conditions stable over past 24h</span>
+                </div>
+              </div>
+
+              <!-- Freshness / Confidence Line -->
+              <div class="freshness-row">
+                <div class="freshness-indicator">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="10"/>
+                    <polyline points="12 6 12 12 16 14"/>
+                  </svg>
+                  <span id="homeFreshnessText" data-i18n="freshnessText">Updated 3 min ago</span>
+                </div>
+                <div class="confidence-pill" id="homeConfidencePill" data-i18n="highConfidence">
+                  Confidence: High (96%)
+                </div>
+              </div>
+            </article>
+
+            <!-- Conditional Emergency Section (Warning / Danger only) -->
+            <article class="emergency-card" id="emergencySection" style="margin-top: 20px; display: none;">
+              <div class="emergency-header">
+                <div class="emergency-title">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                    <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+                    <line x1="12" y1="9" x2="12" y2="13"/>
+                    <line x1="12" y1="17" x2="12.01" y2="17"/>
+                  </svg>
+                  <span data-i18n="emergencyActionsHeader">Emergency Support & Shelter</span>
+                </div>
+                <span class="confidence-pill" style="background:#ffe4e6; border-color:#fecdd3; color:#9f1239;" data-i18n="sosActive">Active Alert</span>
+              </div>
+
+              <div class="sos-action-grid">
+                <a href="tel:112" class="sos-btn" id="sosCall112">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/>
+                  </svg>
+                  <span data-i18n="callEmergency112">National Helpline 112</span>
+                </a>
+
+                <a href="tel:1077" class="sos-btn" style="background: #be123c;" id="sosCall1077">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/>
+                  </svg>
+                  <span data-i18n="callDisasterControl">Disaster Control 1077</span>
+                </a>
+              </div>
+
+              <!-- Nearest Shelter Card -->
+              <div class="shelter-info-box">
+                <div class="shelter-details">
+                  <h4 id="shelterName" data-i18n="shelterName">Joshimath Relief Center #2 (Govt College)</h4>
+                  <p id="shelterMeta" data-i18n="shelterMeta">1.1 km away • Capacity: 180/300 occupied • Medical Aid Ready</p>
+                </div>
+                <button class="shelter-route-btn" id="viewShelterMapBtn" data-i18n="navigateShelter">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polygon points="3 11 22 2 13 21 11 13 3 11"/>
+                  </svg>
+                  <span>Route</span>
+                </button>
+              </div>
+            </article>
+
+            <!-- Key Telemetry (Satellite, Weather & Terrain Analytics) -->
+            <div class="telemetry-grid" style="margin-top: 20px;">
+              <div class="telemetry-card">
+                <span class="label" data-i18n="telemetryRainfall">Rainfall Intensity</span>
+                <span class="value" id="telRainfall">2 mm/h</span>
+                <span class="status-indicator" style="color: #059669;" id="telRainfallStat">Normal Light</span>
+              </div>
+
+              <div class="telemetry-card">
+                <span class="label" data-i18n="telemetrySoil">Soil Saturation</span>
+                <span class="value" id="telSoil">38%</span>
+                <span class="status-indicator" style="color: #059669;" id="telSoilStat">Normal Dry</span>
+              </div>
+
+              <div class="telemetry-card">
+                <span class="label" data-i18n="telemetrySlope">Ground Deformation</span>
+                <span class="value" id="telSlope">0.1 mm/h</span>
+                <span class="status-indicator" style="color: #059669;" id="telSlopeStat">No movement detected (satellite)</span>
+              </div>
+            </div>
+
+          </div>
+
+          <!-- Right Column: Saved Commuter Corridor & Status -->
+          <div class="home-sidebar">
+            
+            <div class="sidebar-card">
+              <h3 data-i18n="savedRoutesHeader" style="display: flex; justify-content: space-between; align-items: center;">
+                <span>Saved Commute Corridor</span>
+                <div style="display: flex; gap: 10px;">
+                  <span style="font-size:0.75rem; color:var(--text-muted); font-weight:600; cursor:pointer;" id="btnOpenRouteModal" title="Change your saved daily route">Change Route</span>
+                  <span style="font-size:0.75rem; color:var(--primary); font-weight:600; cursor:pointer;" id="switchMapTabFromHome" data-i18n="viewOnMap">View on Map →</span>
+                </div>
+              </h3>
+              
+              <div class="route-quick-card" id="routeCardHome">
+                <div class="route-meta">
+                  <h5 data-i18n="homeRouteTitle">Joshimath ⇄ Helang Transit</h5>
+                  <p data-i18n="homeRouteSub">NH-7 Main Corridor • 14.8 km</p>
+                </div>
+                <span class="road-badge open" id="homeRouteBadge" data-i18n="openBadge">Open & Clear</span>
+              </div>
+
+              <div class="risk-reason-box" style="padding: 12px 14px; margin-top: 10px; font-size: 0.85rem;">
+                <div class="reason-header" style="font-size:0.7rem;" data-i18n="corridorNoticeHeader">Corridor Status</div>
+                <p id="homeCorridorReason" style="font-size:0.86rem; color:var(--text-secondary); font-weight:500;">
+                  Corridor clear. Satellite imagery and weather radar show normal conditions along NH-7.
+                </p>
+              </div>
+            </div>
+
+            <!-- Preparedness Summary / Safeguard Rules -->
+            <div class="sidebar-card">
+              <h3 data-i18n="advisoryHeader">Safeguard Rules</h3>
+              <ul style="padding-left: 18px; font-size: 0.85rem; color: var(--text-secondary); display: flex; flex-direction: column; gap: 8px;">
+                <li data-i18n="advisory1">Keep emergency kit &amp; essential IDs ready.</li>
+                <li data-i18n="advisory2">Avoid steep slopes and swollen stream beds.</li>
+                <li data-i18n="advisory3">Check Live Map road status before travel.</li>
+                <li data-i18n="advisory4">Report new ground cracks or blockages instantly.</li>
+              </ul>
+            </div>
+
+          </div>
+
+        </div>
+      </section>
+
+
+      <!-- =================================================================
+           SCREEN 2: INTERACTIVE GEOSPATIAL MAP
+           ================================================================= -->
+      <section class="screen-view" id="screenMap">
+        <div class="map-view-container">
+          
+          <!-- Map Canvas Wrapper (Clean & Minimal with Live API Controls) -->
+          <div class="map-wrapper">
+            <div id="disasterMap"></div>
+
+            <!-- Top Left: Live Map API Connectivity Pill -->
+            <div class="map-api-status-badge" id="mapApiStatusBadge">
+              <span class="api-status-pulse"></span>
+              <span class="api-status-text" id="mapApiStatusText">Map API Connected: OSM & OSRM Engine</span>
+            </div>
+
+            <!-- Top Right: Satellite Mode Indicator Badge -->
+            <div class="map-satellite-badge">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/><line x1="2" y1="12" x2="22" y2="12"/></svg>
+              <span>Live Satellite View</span>
+            </div>
+
+            <!-- Bottom Right: Floating Quick Actions (Zoom, Locate GPS, Recenter) -->
+            <div class="map-floating-tools">
+              <button type="button" class="map-tool-btn" id="btnMapZoomIn" title="Zoom In">+</button>
+              <button type="button" class="map-tool-btn" id="btnMapZoomOut" title="Zoom Out">&minus;</button>
+              <button type="button" class="map-tool-btn" id="btnMapLocateMe" title="Find My Live GPS Location">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"/><circle cx="12" cy="12" r="9"/><line x1="12" y1="1" x2="12" y2="4"/><line x1="12" y1="20" x2="12" y2="23"/><line x1="1" y1="12" x2="4" y2="12"/><line x1="20" y1="12" x2="23" y2="12"/></svg>
+              </button>
+              <button type="button" class="map-tool-btn" id="btnMapRecenter" title="Recenter on Chamoli / Joshimath">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h18M12 3v18"/></svg>
+              </button>
+            </div>
+
+            <!-- Bottom Left: Reverse Geocoding Hint Pill -->
+            <div class="map-inspect-hint">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+              <span>Click any point on map for live Geocoding API lookup</span>
+            </div>
+          </div>
+
+          <!-- Map Side Inspector Panel -->
+          <div class="map-sidebar">
+
+            <!-- Sidebar Title Header -->
+            <div class="map-sidebar-header">
+              <div class="map-sidebar-title-row">
+                <h3 data-i18n="mapInspectorHeader">Geospatial Inspector</h3>
+                <span class="sidebar-live-pill">Live Telemetry</span>
+              </div>
+            </div>
+
+            <!-- Inspector Active Card -->
+            <div class="map-sidebar-inspector">
+              <div class="inspector-card" id="mapInspectorCard">
+                <!-- Colored header band -->
+                <div class="inspector-zone-header danger" id="inspectorZoneHeader">
+                  <div class="inspector-zone-top-tag">
+                    <span class="inspector-zone-type" id="inspectorZoneType">ROAD CORRIDOR</span>
+                    <span class="inspector-risk-badge blocked" id="inspectorBadge">BLOCKED</span>
+                  </div>
+                  <h4 class="inspector-title" id="inspectorTitle">NH-7 (Km 42 Joshimath)</h4>
+                  <div class="inspector-zone-meta" id="inspectorZoneMeta">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 2a8 8 0 0 0-8 8c0 5.25 8 12 8 12s8-6.75 8-12a8 8 0 0 0-8-8z"/><circle cx="12" cy="10" r="3"/></svg>
+                    <span>Joshimath • NH-7 Km 42</span>
+                  </div>
+                </div>
+
+                <!-- Simple Citizen Summary Pills -->
+                <div class="inspector-stat-row" id="inspectorStatRow">
+                  <div class="inspector-stat-pill">
+                    <span class="inspector-stat-label">Road Status</span>
+                    <span class="inspector-stat-value" id="inspectorStatTransit">Closed for Transit</span>
+                  </div>
+                  <div class="inspector-stat-pill">
+                    <span class="inspector-stat-label">Travel Advisory</span>
+                    <span class="inspector-stat-value" id="inspectorStatAdvisory">Use Bypass (+12m)</span>
+                  </div>
+                </div>
+
+                <!-- Description / What to know -->
+                <div class="inspector-body" id="inspectorDescription">
+                  Mudflow has temporarily closed both lanes of NH-7 near Km 42. Road clearing machinery is actively deployed.
+                </div>
+
+                <!-- Alternate Route -->
+                <div class="inspector-alt-route-box" id="inspectorAltBox">
+                  <div class="alt-route-tag">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>
+                    <span>Alternate Route Available</span>
+                  </div>
+                  <div class="alt-route-title" id="inspectorAltName">Upper Helang Bypass</div>
+                  <div class="alt-route-stats" id="inspectorAltStats">
+                    <span class="alt-stat-pill safe" id="inspectorAltStatus">Open</span>
+                    <span id="inspectorAltTime">+12 mins</span>
+                    <span>&bull;</span>
+                    <span id="inspectorAltDist">14.8 km</span>
+                  </div>
+                  <div class="alt-route-note" id="inspectorAltNote">Paved two-lane road, safe elevation</div>
+                  <button type="button" class="btn-activate-alt-route" id="btnInspectorApplyAlt">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="3 11 22 2 13 21 11 13 3 11"/></svg>
+                    <span>Use Alternate Route</span>
+                  </button>
+                </div>
+
+                <!-- No-alternate fallback -->
+                <div class="inspector-no-alt-box" id="inspectorNoAltBox" style="display: none;">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="10"/>
+                    <line x1="12" y1="8" x2="12" y2="12"/>
+                    <line x1="12" y1="16" x2="12.01" y2="16"/>
+                  </svg>
+                  <span>No alternate route available &mdash; contact local authorities</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Corridor Selection List -->
+            <div class="map-sidebar-lists">
+              <div class="sidebar-section-header">
+                <h4 data-i18n="monitoredRoadsHeader">Monitored Corridors</h4>
+                <span class="sidebar-section-count">5 routes</span>
+              </div>
+              <div class="road-list">
+                <div class="road-item active-selected" data-road-id="nh7-km42">
+                  <div class="road-item-top">
+                    <span class="road-name">NH-7 (Km 42 Joshimath)</span>
+                    <span class="road-badge blocked">Blocked</span>
+                  </div>
+                  <span class="road-subtext">Debris flow &bull; Closed for transit</span>
+                </div>
+
+                <div class="road-item" data-road-id="marwari-bridge">
+                  <div class="road-item-top">
+                    <span class="road-name">Marwari Bridge Corridor</span>
+                    <span class="road-badge at-risk">At-Risk</span>
+                  </div>
+                  <span class="road-subtext">River swell near pier &bull; Caution</span>
+                </div>
+
+                <div class="road-item" data-road-id="upper-ridge-road">
+                  <div class="road-item-top">
+                    <span class="road-name">Sector 5 Upper Ridge Link</span>
+                    <span class="road-badge at-risk">At-Risk</span>
+                  </div>
+                  <span class="road-subtext">Minor slope creep &bull; Pass with caution</span>
+                </div>
+
+                <div class="road-item" data-road-id="badrinath-gorge">
+                  <div class="road-item-top">
+                    <span class="road-name">Badrinath Gorge Access Cut</span>
+                    <span class="road-badge blocked">Blocked</span>
+                  </div>
+                  <span class="road-subtext">Rockfall blockage &bull; No bypass route</span>
+                </div>
+
+                <div class="road-item" data-road-id="helang-bypass">
+                  <div class="road-item-top">
+                    <span class="road-name">Upper Helang Bypass</span>
+                    <span class="road-badge open">Open</span>
+                  </div>
+                  <span class="road-subtext">Clear &bull; Designated transit route</span>
+                </div>
+              </div>
+            </div>
+
+          </div>
+
+        </div>
+      </section>
+
+
+      <!-- =================================================================
+           SCREEN 3: ALERTS & ROUTES
+           ================================================================= -->
+      <section class="screen-view" id="screenAlerts">
+        <div class="alerts-layout">
+          
+          <div class="alerts-header-bar">
+            <div>
+              <h2 data-i18n="alertsPageTitle">Active Alerts & Corridors</h2>
+              <span style="font-size: 0.84rem; color: var(--text-muted);" data-i18n="alertsPageSub">Real-time hazard notifications based on telemetry fusion</span>
+            </div>
+
+            <div class="alerts-filter-group">
+              <button class="alert-filter-btn active" data-filter="all" data-i18n="filterAll">All Alerts</button>
+              <button class="alert-filter-btn" data-filter="area" data-i18n="filterArea">My Area</button>
+              <button class="alert-filter-btn" data-filter="route" data-i18n="filterRoute">Saved Routes</button>
+            </div>
+          </div>
+
+          <!-- Active Alerts Container -->
+          <div id="alertsContainer" style="display: flex; flex-direction: column; gap: 16px;">
+            
+            <!-- Alert 1: Ground Movement -->
+            <article class="alert-card danger" data-category="area">
+              <div class="alert-top">
+                <span class="alert-scope-tag" style="color: #dc2626;" data-i18n="alertScopeArea">Area Hazard Alert</span>
+                <span class="alert-time">Issued 14 min ago • Valid until 6:00 PM</span>
+              </div>
+              <h3 class="alert-headline" data-i18n="alert1Headline">High Landslide Probability: Sector 4 Slopes</h3>
+              <p class="alert-description" data-i18n="alert1Desc">
+                Satellite InSAR ground analysis registered displacement acceleration following continuous 48 mm/h precipitation. Residents along the western ridge are advised to proceed to designated relief shelters.
+              </p>
+              <div class="data-source-line" data-i18n="dataSourceLine1">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
+                </svg>
+                <span>Based on Rainfall Radar + Satellite Imagery + Ground InSAR Telemetry</span>
+              </div>
+            </article>
+
+            <!-- Alert 2: Route Closure with Alternate Bypass -->
+            <article class="alert-card warning" data-category="route">
+              <div class="alert-top">
+                <span class="alert-scope-tag" style="color: #ea580c;" data-i18n="alertScopeRoute">Saved Route Disruption</span>
+                <span class="alert-time">Issued 28 min ago • Clearance ongoing</span>
+              </div>
+              <h3 class="alert-headline" data-i18n="alert2Headline">NH-7 Road Blockage at Km 42 (Joshimath-Helang)</h3>
+              <p class="alert-description" data-i18n="alert2Desc">
+                Mudflow has temporarily closed both lanes of NH-7 near Km 42. Road clearing machinery is actively deployed.
+              </p>
+
+              <!-- Alternate Route Card -->
+              <div class="alternate-road-card">
+                <div class="alternate-meta">
+                  <h4 data-i18n="alternateAvailableHeader">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                      <polyline points="9 18 15 12 9 6"/>
+                    </svg>
+                    <span>Alternate Road Available: Upper Helang Bypass</span>
+                  </h4>
+                  <p data-i18n="alternateRouteSub">Paved two-lane road • Safe elevation • +12 mins transit time</p>
+                </div>
+                <button class="switch-route-btn" id="btnSwitchRoute" data-i18n="applyAlternateRoute">Use Alternate Route</button>
+              </div>
+
+              <div class="data-source-line" data-i18n="dataSourceLine2">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
+                </svg>
+                <span>Based on Traffic Police Feeds + Highway Telemetry + Satellite Radar</span>
+              </div>
+            </article>
+
+          </div>
+
+          <!-- Calm Empty State (Simulated via Control Bar) -->
+          <div class="empty-alerts-state" id="emptyAlertsView" style="display: none;">
+            <div class="empty-icon-shield">
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+                <polyline points="9 12 11 14 15 10"/>
+              </svg>
+            </div>
+            <h3 data-i18n="emptyAlertsTitle">No Active Warnings or Route Blockages</h3>
+            <p data-i18n="emptyAlertsDesc">
+              All monitored regions, precipitation zones, and commuter corridors in your sector are operating within normal safety limits.
+            </p>
+          </div>
+
+        </div>
+      </section>
+
+
+      <!-- =================================================================
+           SCREEN 4: CITIZEN REPORT
+           ================================================================= -->
+      <section class="screen-view" id="screenReport">
+        <div class="report-container">
+          
+          <form class="report-card" id="citizenReportForm">
+            <div class="report-card-header">
+              <h2 data-i18n="reportTitle">Report Ground & Road Hazard</h2>
+              <p data-i18n="reportSubtitle">Field observations assist early-warning models and verify localized safety statuses.</p>
+            </div>
+
+            <!-- 1. Photo Capture / Upload -->
+            <div class="form-section">
+              <label class="form-label">
+                <span data-i18n="reportPhotoLabel">Photo Evidence</span>
+                <span class="optional" data-i18n="optionalTag">Visual verification</span>
+              </label>
+
+              <!-- Dual Photo Options: Direct Device Upload & Live Geotag Camera -->
+              <div class="photo-options-grid">
+                <!-- Option 1: Direct File Upload -->
+                <div class="photo-action-card direct-upload-card" id="btnUploadDirect">
+                  <input type="file" id="photoFileInput" accept="image/*" style="display: none;" multiple>
+                  <div class="photo-card-icon direct-icon">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                      <polyline points="17 8 12 3 7 8"/>
+                      <line x1="12" y1="3" x2="12" y2="15"/>
+                    </svg>
+                  </div>
+                  <div class="photo-card-info">
+                    <h5 data-i18n="uploadDirectTitle">Direct Photo Upload</h5>
+                    <p data-i18n="uploadDirectSub">Select photos from device gallery / storage</p>
+                  </div>
+                  <div class="photo-card-action">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>
+                    <span>Browse Files</span>
+                  </div>
+                </div>
+
+                <!-- Option 2: Live Geotag Camera -->
+                <div class="photo-action-card geotag-cam-card" id="btnOpenGeotagCam">
+                  <input type="file" id="nativeCameraInput" accept="image/*" capture="environment" style="display: none;">
+                  <div class="cam-live-indicator">
+                    <span class="pulse-dot"></span> Live GPS Stamp
+                  </div>
+                  <div class="photo-card-icon cam-icon">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+                      <circle cx="12" cy="13" r="4"/>
+                    </svg>
+                  </div>
+                  <div class="photo-card-info">
+                    <h5 data-i18n="geotagCamTitle">Open Geotag Camera</h5>
+                    <p data-i18n="geotagCamSub">Instant photo with real-time GPS & timestamp</p>
+                  </div>
+                  <div class="photo-card-action cam-action">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/></svg>
+                    <span>Open Camera</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Preview Grid -->
+              <div class="photo-preview-grid" id="photoPreviewContainer"></div>
+            </div>
+
+            <!-- 2. Auto-filled, Editable Location -->
+            <div class="form-section">
+              <label class="form-label">
+                <span data-i18n="reportLocationLabel">Hazard Location</span>
+                <span class="optional" data-i18n="autoDetectedTag">Auto-filled GPS</span>
+              </label>
+              <div class="location-input-group">
+                <input type="text" class="text-input" id="reportLocationInput" value="" placeholder="Detecting your GPS location…" required>
+                <button type="button" class="auto-loc-btn" id="btnRefreshGPS">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="10"/>
+                    <line x1="22" y1="12" x2="18" y2="12"/>
+                    <line x1="6" y1="12" x2="2" y2="12"/>
+                    <line x1="12" y1="6" x2="12" y2="2"/>
+                    <line x1="12" y1="22" x2="12" y2="18"/>
+                  </svg>
+                  <span data-i18n="btnDetectGPS">Detect GPS</span>
+                </button>
+              </div>
+            </div>
+
+            <!-- 3. Quick-Select Issue Tags -->
+            <div class="form-section">
+              <label class="form-label">
+                <span data-i18n="reportHazardTypeLabel">Select Issue Category</span>
+                <span class="optional" data-i18n="singleSelectTag">Tap to select</span>
+              </label>
+              <div class="tag-chips-grid" id="hazardTagGroup">
+                <div class="tag-chip active" data-tag="crack">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+                  <span data-i18n="tagCrack">Ground / Wall Crack</span>
+                </div>
+                <div class="tag-chip" data-tag="water">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"/></svg>
+                  <span data-i18n="tagWater">Water Logging / Inundation</span>
+                </div>
+                <div class="tag-chip" data-tag="road_blocked">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg>
+                  <span data-i18n="tagRoadBlocked">Road Blocked</span>
+                </div>
+                <div class="tag-chip" data-tag="movement">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3l4 8 5-5 5 15H2L8 3z"/></svg>
+                  <span data-i18n="tagMovement">Landslide / Slope Movement</span>
+                </div>
+                <div class="tag-chip" data-tag="bridge_damage">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="14" width="18" height="4" rx="1"/><line x1="6" y1="14" x2="6" y2="20"/><line x1="18" y1="14" x2="18" y2="20"/><path d="M3 14c4-6 14-6 18 0"/></svg>
+                  <span data-i18n="tagBridge">Bridge / Culvert Damage</span>
+                </div>
+                <div class="tag-chip" data-tag="fallen_wires">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+                  <span data-i18n="tagWires">Fallen Utilities / Poles</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- 4. Optional Text Note -->
+            <div class="form-section">
+              <label class="form-label">
+                <span data-i18n="reportDescLabel">Additional Remarks</span>
+                <span class="optional" data-i18n="optionalTag">Optional</span>
+              </label>
+              <textarea class="textarea-input" id="reportDescInput" placeholder="Describe extent of crack, flow of water, or visible signs of ongoing movement..." rows="3"></textarea>
+            </div>
+
+            <!-- 5. Submit Button (Dynamic Offline Capable) -->
+            <button type="submit" class="submit-btn" id="submitReportBtn">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="22" y1="2" x2="11" y2="13"/>
+                <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+              </svg>
+              <span id="submitBtnText" data-i18n="btnSubmitOnline">Submit Citizen Hazard Report</span>
+            </button>
+
+          </form>
+
+        </div>
+      </section>
+
+    </main>
+
+  </div>
+
+  <!-- =====================================================================
+       SUBMISSION CONFIRMATION MODAL
+       ===================================================================== -->
+  <div class="modal-backdrop" id="confirmationModal">
+    <div class="confirmation-card">
+      <div class="confirm-icon-circle">
+        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+          <polyline points="20 6 9 17 4 12"/>
+        </svg>
+      </div>
+
+      <h3 style="font-size: 1.25rem; font-weight: 800; color: var(--text-primary);" data-i18n="modalConfirmTitle">
+        Report Dispatched Successfully
+      </h3>
+
+      <p style="font-size: 0.86rem; color: var(--text-muted);" id="modalConfirmMessage" data-i18n="modalConfirmSub">
+        Your observation has been registered in the early warning system and routed to the control center.
+      </p>
+
+      <div class="confirm-details-box">
+        <div class="row">
+          <span data-i18n="confirmRefId">Reference ID:</span>
+          <span id="modalRefId">#REP-2026-9184</span>
+        </div>
+        <div class="row">
+          <span data-i18n="confirmStatus">Status:</span>
+          <span id="modalSyncStatus" style="color: #059669;">Verified & Synced</span>
+        </div>
+        <div class="row">
+          <span data-i18n="confirmLocation">Location:</span>
+          <span id="modalLocationVal">Joshimath Ward 5</span>
+        </div>
+        <div class="row">
+          <span data-i18n="confirmCategory">Category:</span>
+          <span id="modalCategoryVal">Ground / Wall Crack</span>
+        </div>
+      </div>
+
+      <button class="modal-close-btn" id="modalCloseBtn" style="margin-top: 14px;" data-i18n="modalClose">
+        Close & Return
+      </button>
+    </div>
+  </div>
+
+  <!-- =====================================================================
+       LOCATION / RISK ZONE SELECTOR MODAL
+       ===================================================================== -->
+  <div class="modal-backdrop" id="locationModal">
+    <div class="confirmation-card" style="max-width: 520px; text-align: left; align-items: stretch;">
+      <div style="display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--border-light); padding-bottom: 12px;">
+        <h3 style="font-size: 1.15rem; font-weight: 800; color: var(--text-primary);">Select Monitored Area</h3>
+        <button type="button" id="closeLocationModalBtn" style="background: none; border: none; font-size: 1.2rem; cursor: pointer; color: var(--text-muted);">&times;</button>
+      </div>
+
+      <p style="font-size: 0.84rem; color: var(--text-muted); margin-top: 4px;">
+        Choose a sector to view live satellite analytics, weather alerts, and local risk level:
+      </p>
+
+      <div class="road-list" id="locationList" style="margin: 12px 0;">
+        <div class="road-item" data-sector-risk="safe" data-sector-name="Helang Valley Base (Zone A)" data-sector-lat="30.5480" data-sector-lng="79.5540">
+          <div class="road-item-top">
+            <span class="road-name">Helang Valley Base (Zone A)</span>
+            <span class="road-badge open">SAFE</span>
+          </div>
+          <span style="font-size: 0.74rem; color: var(--text-muted);">Stable terrain • Low moisture • Safe zone</span>
+        </div>
+
+        <div class="road-item" data-sector-risk="watch" data-sector-name="Marwari Corridor (Sector 2)" data-sector-lat="30.5620" data-sector-lng="79.5730">
+          <div class="road-item-top">
+            <span class="road-name">Marwari Corridor (Sector 2)</span>
+            <span class="road-badge at-risk">WATCH</span>
+          </div>
+          <span style="font-size: 0.74rem; color: var(--text-muted);">Light persistent drizzle • Minor saturation</span>
+        </div>
+
+        <div class="road-item" data-sector-risk="warning" data-sector-name="Upper Ridge (Sector 5)" data-sector-lat="30.5670" data-sector-lng="79.5690">
+          <div class="road-item-top">
+            <span class="road-name">Upper Ridge (Sector 5)</span>
+            <span class="road-badge" style="background: #fff7ed; color: #ea580c;">WARNING</span>
+          </div>
+          <span style="font-size: 0.74rem; color: var(--text-muted);">Heavy precipitation • Elevated soil saturation</span>
+        </div>
+
+        <div class="road-item" data-sector-risk="danger" data-sector-name="Chamoli — Joshimath Slopes (Sector 4)" data-sector-lat="30.5564" data-sector-lng="79.5642">
+          <div class="road-item-top">
+            <span class="road-name">Chamoli — Joshimath Slopes (Sector 4)</span>
+            <span class="road-badge blocked">DANGER</span>
+          </div>
+          <span style="font-size: 0.74rem; color: var(--text-muted);">Heavy runoff • Active ground displacement</span>
+        </div>
+      </div>
+
+      <button class="modal-close-btn" id="btnAutoDetectLoc" style="background: var(--bg-card-muted); color: var(--text-primary); border: 1px solid var(--border-light); font-size: 0.85rem; padding: 10px;">
+        Detect Live GPS Location
+      </button>
+    </div>
+  </div>
+
+  <!-- =====================================================================
+       SAVED COMMUTE ROUTE MANAGER MODAL
+       ===================================================================== -->
+  <div class="modal-backdrop" id="savedRouteModal">
+    <div class="confirmation-card" style="max-width: 520px; text-align: left; align-items: stretch;">
+      <div style="display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--border-light); padding-bottom: 12px;">
+        <h3 style="font-size: 1.15rem; font-weight: 800; color: var(--text-primary);">Manage Saved Commute Route</h3>
+        <button type="button" id="closeRouteModalBtn" style="background: none; border: none; font-size: 1.2rem; cursor: pointer; color: var(--text-muted);">&times;</button>
+      </div>
+
+      <p style="font-size: 0.84rem; color: var(--text-muted); margin-top: 4px;">
+        Choose your primary daily commute or travel corridor to receive proactive blockage alerts and alternate bypass recommendations:
+      </p>
+
+      <div class="road-list" id="savedRoutesSelectionList" style="margin: 12px 0;">
+        <div class="road-item" data-saved-route-id="nh7-km42">
+          <div class="road-item-top">
+            <span class="road-name">Joshimath ⇄ Helang Transit (NH-7)</span>
+            <span class="road-badge blocked">Blocked (Km 42)</span>
+          </div>
+          <span style="font-size: 0.74rem; color: var(--text-muted);">Main arterial highway • 14.8 km • Alternate bypass ready</span>
+        </div>
+
+        <div class="road-item" data-saved-route-id="helang-bypass">
+          <div class="road-item-top">
+            <span class="road-name">Upper Helang Bypass (NH-7B)</span>
+            <span class="road-badge open">Open & Clear</span>
+          </div>
+          <span style="font-size: 0.74rem; color: var(--text-muted);">Elevated mountain corridor • 16.2 km • Safe elevation</span>
+        </div>
+
+        <div class="road-item" data-saved-route-id="marwari-bridge">
+          <div class="road-item-top">
+            <span class="road-name">Marwari Bridge Corridor</span>
+            <span class="road-badge at-risk">At-Risk</span>
+          </div>
+          <span style="font-size: 0.74rem; color: var(--text-muted);">River swell near pier • Heavy vehicles restricted</span>
+        </div>
+
+        <div class="road-item" data-saved-route-id="upper-ridge-road">
+          <div class="road-item-top">
+            <span class="road-name">Sector 5 Upper Ridge Link</span>
+            <span class="road-badge at-risk">At-Risk</span>
+          </div>
+          <span style="font-size: 0.74rem; color: var(--text-muted);">Ridge commute • 7.8 km • Minor slope creep</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- =====================================================================
+       LIVE GEOTAG CAMERA MODAL
+       ===================================================================== -->
+  <div class="modal-backdrop camera-modal-backdrop" id="geotagCameraModal">
+    <div class="camera-modal-container">
+      <!-- Camera Top Bar -->
+      <div class="camera-top-bar">
+        <div class="camera-badge-row">
+          <span class="cam-status-pill">
+            <span class="cam-record-dot"></span>
+            <span>GEOTAG CAMERA</span>
+          </span>
+          <span class="cam-gps-pill" id="camGpsStatus">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/></svg>
+            <span id="camGpsStatusText">GPS Fixed (±3m)</span>
+          </span>
+        </div>
+        <button type="button" class="camera-close-btn" id="closeCameraModalBtn" aria-label="Close Camera">&times;</button>
+      </div>
+
+      <!-- Camera Viewport / Viewfinder -->
+      <div class="camera-viewfinder" id="cameraViewfinder">
+        <video id="cameraVideo" autoplay playsinline muted></video>
+        
+        <!-- Viewfinder Overlays & Crosshairs -->
+        <div class="viewfinder-grid">
+          <div class="vf-corner tl"></div>
+          <div class="vf-corner tr"></div>
+          <div class="vf-corner bl"></div>
+          <div class="vf-corner br"></div>
+          <div class="vf-crosshair"></div>
+        </div>
+
+        <!-- Live Geotag HUD Overlay on top of video -->
+        <div class="viewfinder-hud">
+          <div class="hud-top-meta">
+            <div class="hud-item">
+              <span class="hud-label">COORDINATES</span>
+              <span class="hud-val" id="camCoordinatesHud">30.5564° N, 79.5642° E</span>
+            </div>
+            <div class="hud-item">
+              <span class="hud-label">ELEVATION</span>
+              <span class="hud-val" id="camElevationHud">1,874 m AMSL</span>
+            </div>
+          </div>
+          <div class="hud-bottom-meta">
+            <div class="hud-item">
+              <span class="hud-label">DATE & TIME</span>
+              <span class="hud-val" id="camTimestampHud">05-SEP-2026 11:45:00 IST</span>
+            </div>
+            <div class="hud-watermark">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2L3 7v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V7l-9-5z"/></svg>
+              <span>RESILIENTGUARD VERIFIED</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Capture Flash Effect Animation -->
+        <div class="camera-flash" id="cameraFlash"></div>
+      </div>
+
+      <!-- Camera Controls Bar -->
+      <div class="camera-controls-bar">
+        <button type="button" class="cam-tool-btn" id="btnSwitchCamera" title="Switch Camera View">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M20 4v5h-.5a7 7 0 0 0-12 5.5M4 20v-5h.5a7 7 0 0 0 12-5.5"/>
+          </svg>
+        </button>
+
+        <button type="button" class="cam-shutter-btn" id="btnCaptureShutter" title="Take Geotagged Photo">
+          <div class="shutter-inner"></div>
+        </button>
+
+        <button type="button" class="cam-tool-btn" id="btnNativeCameraFallback" title="Use Device Gallery / Native Camera">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+            <circle cx="8.5" cy="8.5" r="1.5"/>
+            <polyline points="21 15 16 10 5 21"/>
+          </svg>
+        </button>
+      </div>
+      
+      <!-- Offscreen Canvas for stamping watermark and rendering final photo -->
+      <canvas id="geotagCanvas" style="display: none;"></canvas>
+    </div>
+  </div>
+
+  <!-- =====================================================================
+       ADMIN LIVE ALERT BROADCAST DISPATCHER MODAL
+       ===================================================================== -->
+  <div class="modal-backdrop admin-modal-backdrop" id="adminBroadcastModal">
+    <div class="modal-card admin-broadcast-card">
+      <div class="modal-header-row">
+        <div class="modal-title-wrap">
+          <div class="admin-modal-icon">🚨</div>
+          <div>
+            <h3>Admin Emergency Live Broadcast Console</h3>
+            <p>Transmit instant high-priority disaster warnings to all citizen devices</p>
+          </div>
+        </div>
+        <button type="button" class="modal-close-icon-btn" id="closeAdminModalBtn" aria-label="Close Admin Modal">&times;</button>
+      </div>
+
+      <div class="admin-presets-section">
+        <label class="form-label">Select Emergency Scenario Preset</label>
+        <div class="preset-pill-grid">
+          <button type="button" class="preset-pill active" data-scenario="landslide">
+            🔴 Sector 4 Landslide &amp; Debris Flow
+          </button>
+          <button type="button" class="preset-pill" data-scenario="flood">
+            🌊 Alaknanda River Flash Flood Surge
+          </button>
+          <button type="button" class="preset-pill" data-scenario="mudflow">
+            🚧 NH-7 Highway Km 42 Mudflow Blockade
+          </button>
+          <button type="button" class="preset-pill" data-scenario="cloudburst">
+            ⛈️ Chamoli Cloudburst Emergency Shelter
+          </button>
+        </div>
+      </div>
+
+      <div class="form-group" style="margin-top: 14px;">
+        <label class="form-label" for="adminAlertTitleInput">Alert Headline</label>
+        <input type="text" class="text-input" id="adminAlertTitleInput" value="CRITICAL FLASH FLOOD &amp; LANDSLIDE EVACUATION">
+      </div>
+
+      <div class="form-group" style="margin-top: 12px;">
+        <label class="form-label" for="adminAlertDescInput">Citizen Action &amp; Evacuation Advisory</label>
+        <textarea class="textarea-input" id="adminAlertDescInput" rows="3">District Disaster Control has issued an immediate evacuation advisory for residents in low-lying riverside zones and Sector 4 slopes. Move to higher ground or nearest shelter immediately.</textarea>
+      </div>
+
+      <div class="form-row-dual" style="margin-top: 12px; display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+        <div class="form-group">
+          <label class="form-label">Alert Severity Level</label>
+          <select class="text-input" id="adminAlertSeveritySelect">
+            <option value="danger" selected>🔴 RED ALERT (Immediate Evacuation)</option>
+            <option value="warning">🟠 ORANGE WARNING (High Risk / Blockade)</option>
+            <option value="watch">🟡 YELLOW WATCH (Precautionary Advisory)</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Audio Siren Tone</label>
+          <select class="text-input" id="adminAlertSirenSelect">
+            <option value="eas" selected>🔊 Dual-Tone EAS Siren Alarm</option>
+            <option value="wail">🚨 High-Lo Evacuation Wail</option>
+            <option value="silent">🔕 Visual Only (No Siren)</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="admin-modal-actions" style="margin-top: 18px; display: flex; gap: 10px; justify-content: flex-end;">
+        <button type="button" class="btn-secondary" id="btnCancelAdminModal">Cancel</button>
+        <button type="button" class="btn-primary admin-broadcast-send-btn" id="btnDispatchLiveAlert">
+          <span class="pulse-icon">📡</span>
+          <span>Transmit Live Alert (With Siren Alarm)</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- =====================================================================
+       LIVE EMERGENCY ALERT BOX POPUP MODAL (Blinking with Alarm)
+       ===================================================================== -->
+  <div class="emergency-popup-backdrop" id="adminLiveAlertPopupModal">
+    <div class="emergency-popup-box emergency-box-blinking" id="emergencyPopupBox">
+      <!-- Glow effect layers -->
+      <div class="emergency-box-glow"></div>
+      
+      <!-- Top header bar of the box popup -->
+      <div class="emergency-box-header">
+        <div class="emergency-beacon-wrapper">
+          <span class="beacon-pulse-ring"></span>
+          <span class="beacon-core-dot"></span>
+        </div>
+        <div class="emergency-header-text">
+          <span class="emergency-tag-badge">🚨 LIVE ADMIN EMERGENCY BROADCAST</span>
+          <span class="emergency-level-badge" id="popupSeverityBadge">RED ALERT</span>
+        </div>
+        <button type="button" class="emergency-close-btn" id="btnCloseEmergencyPopup" aria-label="Acknowledge and Close">&times;</button>
+      </div>
+
+      <!-- Main body of the box popup -->
+      <div class="emergency-box-body">
+        <div class="emergency-time-indicator" id="popupAlertTimestamp">
+          Just now • Issued by District Disaster Authority
+        </div>
+        <h2 class="emergency-box-title" id="popupAlertHeadline">
+          CRITICAL FLASH LANDSLIDE &amp; DEBRIS FLOW EVACUATION
+        </h2>
+        <div class="emergency-desc-container">
+          <p class="emergency-box-desc" id="popupAlertDescription">
+            District Disaster Control has issued an immediate evacuation advisory for residents in low-lying riverside zones and Sector 4 slopes. Move to designated higher ground relief centers immediately.
+          </p>
+        </div>
+      </div>
+
+      <!-- Action Buttons inside the box popup -->
+      <div class="emergency-box-actions">
+        <button type="button" class="emergency-action-btn map-action" id="btnPopupViewMap">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"/><line x1="8" y1="2" x2="8" y2="18"/><line x1="16" y1="6" x2="16" y2="22"/></svg>
+          <span>View Threat Map</span>
+        </button>
+        <button type="button" class="emergency-action-btn shelter-action" id="btnPopupShelter">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+          <span>Navigate to Shelter</span>
+        </button>
+        <button type="button" class="emergency-action-btn silence-action" id="btnPopupSilenceAlarm">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" id="popupSilenceIcon"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/></svg>
+          <span id="popupSilenceText">Silence Siren</span>
+        </button>
+      </div>
+      
+      <!-- Footer Acknowledge Dismiss link -->
+      <div class="emergency-box-footer">
+        <button type="button" class="emergency-dismiss-link" id="btnPopupDismiss">Acknowledge &amp; Dismiss Alert</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Notification element -->
+  <div class="toast-notification" id="appToast"></div>
+
+  <!-- Leaflet JS -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  
+  <!-- Main Application Logic -->
+  <script src="app.js"></script>
+</body>
+</html>

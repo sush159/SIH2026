@@ -1,0 +1,753 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="District Disaster Management Authority (DDMA) Chamoli Emergency Operations Center — Overview Heatmap, Danger Zone Intelligence & Alert Dissemination.">
+  <title>ResilientGuard — DDMA Operations Command Center</title>
+
+  <!-- Google Fonts: Plus Jakarta Sans & JetBrains Mono -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+
+  <!-- Leaflet CSS for Tactical GIS Map -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+
+  <!-- Operational Light Mode Stylesheet -->
+  <link rel="stylesheet" href="admin.css">
+</head>
+<body>
+
+  <!-- =====================================================================
+       TOP COMMAND BAR (COMPACT & UNCLUTTERED)
+       ===================================================================== -->
+  <header class="admin-header">
+    <div class="admin-brand-wrap">
+      <div class="admin-shield-icon">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+        </svg>
+      </div>
+      <span class="brand-title">ResilientGuard</span>
+      <span class="admin-badge-role">DDMA Chamoli</span>
+    </div>
+
+    <!-- Central Page Switcher Navigation -->
+    <nav class="header-page-nav">
+      <button type="button" class="nav-page-btn active" id="navBtnPage1" onclick="switchAdminPage('page1')">
+        Overview
+      </button>
+      <button type="button" class="nav-page-btn" id="navBtnPage2" onclick="switchAdminPage('page2')">
+        Zone Details
+      </button>
+      <button type="button" class="nav-page-btn" id="navBtnPage4" onclick="switchAdminPage('page4')">
+        Citizen Reports
+        <span class="nav-tab-badge" id="citizenReportsNavBadge">4</span>
+      </button>
+      <button type="button" class="nav-page-btn" id="navBtnPage3" onclick="switchAdminPage('page3')">
+        Alerts &amp; History
+      </button>
+    </nav>
+
+    <!-- Header Actions & Meta -->
+    <div class="admin-header-actions">
+      <div class="admin-live-pulse-badge">
+        <span class="pulse-dot"></span>
+        <span>Mesh Online</span>
+      </div>
+
+      <div class="admin-clock" id="adminLiveClock">00:35:00 IST</div>
+
+      <a href="field.html" class="btn-portal-link" title="Switch to Field Officer Patrol Console" style="border-color: #2563eb; color: #60a5fa; background: rgba(37,99,235,0.12);">
+        Field Patrol
+      </a>
+
+      <a href="index.html" class="btn-portal-link" title="Switch to Citizen Portal">
+        Citizen Portal
+      </a>
+
+      <a href="login.html" class="btn-portal-link" title="Sign out" style="color: var(--status-critical-text);">
+        Logout
+      </a>
+    </div>
+  </header>
+
+  <!-- =====================================================================
+       PAGE 1 — OVERVIEW
+       ===================================================================== -->
+  <main class="admin-page-view active" id="viewPage1Overview">
+    <div class="page-content-wrapper">
+      
+      <!-- Top Row: Quick Stats (5 Interactive Metric Cards) -->
+      <section class="overview-stats-row">
+        
+        <div class="stat-metric-card critical clickable" onclick="openStatDetailModal('danger-zones')" title="View danger zones breakdown">
+          <div class="stat-label-row">
+            <span>Danger Zones</span>
+            <span class="status-pill critical">1 Critical</span>
+          </div>
+          <div class="stat-value" id="statDangerZonesCount">3 Active</div>
+          <div class="stat-subtext">1 Critical • 1 High • 1 Moderate</div>
+        </div>
+
+        <div class="stat-metric-card warning clickable" onclick="openStatDetailModal('villages')" title="View at-risk settlements">
+          <div class="stat-label-row">
+            <span>At-Risk Settlements</span>
+            <span class="status-pill high">High Scope</span>
+          </div>
+          <div class="stat-value" id="statVillagesCount">4 Sectors</div>
+          <div class="stat-subtext">Sector 4, Helang, Sunil Gaon, Govindghat</div>
+        </div>
+
+        <div class="stat-metric-card info clickable" onclick="openStatDetailModal('roads')" title="View road corridors">
+          <div class="stat-label-row">
+            <span>Road Blockades</span>
+            <span class="status-pill blocked">1 Blocked</span>
+          </div>
+          <div class="stat-value">1 Corridor</div>
+          <div class="stat-subtext">NH-7 Km 42 (Helang Bypass Active)</div>
+        </div>
+
+        <div class="stat-metric-card hardware clickable" onclick="openStatDetailModal('hardware')" title="View hardware status">
+          <div class="stat-label-row">
+            <span>Offline Gateways</span>
+            <span class="status-pill critical">Silent Spike</span>
+          </div>
+          <div class="stat-value" style="color: #be123c;">1 Node</div>
+          <div class="stat-subtext">GW-04 (Sector 4 post-tilt silence)</div>
+        </div>
+
+        <div class="stat-metric-card citizen clickable" onclick="switchAdminPage('page4')" title="View citizen reports feed">
+          <div class="stat-label-row">
+            <span>Citizen Reports</span>
+            <span class="status-pill high" id="statCitizenPendingBadge">2 Pending</span>
+          </div>
+          <div class="stat-value" style="color: #2563eb;" id="statCitizenReportsCount">4 Filed</div>
+          <div class="stat-subtext">2 Verified by Patrol • 2 Pending <span class="stat-tap-hint">View feed →</span></div>
+        </div>
+
+      </section>
+
+      <!-- Brief Gateway/Sensor Health Summary Line -->
+      <div class="hardware-health-bar clickable" onclick="openStatDetailModal('hardware')" title="Open hardware telemetry">
+        <span><strong>Telemetry:</strong> 1 Gateway offline (GW-04), 7 online • 24 sensors active</span>
+        <span style="color: var(--color-accent); font-weight: 700; text-decoration: underline;">Hardware Status →</span>
+      </div>
+
+      <!-- Main Layout: Live Heatmap (Left Majority) + Danger Zones List (Right) -->
+      <section class="overview-main-grid">
+        
+        <!-- Live Risk Heatmap -->
+        <div class="heatmap-panel-wrapper">
+          <div id="leafletOverviewMap"></div>
+          <div class="heatmap-legend-badge">
+            <span><strong style="color: #dc2626;">■</strong> Critical (&gt;85%)</span>
+            <span><strong style="color: #ea580c;">■</strong> High (65-85%)</span>
+            <span><strong style="color: #d97706;">■</strong> Moderate (40-65%)</span>
+            <span><strong style="color: #16a34a;">■</strong> Low (&lt;40%)</span>
+          </div>
+        </div>
+
+        <!-- Danger Zones List Panel (Sorted by Severity) -->
+        <div class="danger-zones-panel">
+          <div class="panel-section-title">
+            <span>Active Danger Zones</span>
+          </div>
+
+          <!-- Zone 1: Sector 4 Slopes (Critical) -->
+          <div class="zone-list-card active-selected" onclick="openZoneDetails('sector-4')">
+            <div class="zone-card-top">
+              <span class="zone-name-title">Sector 4 Slopes</span>
+              <span class="status-pill critical">CRITICAL</span>
+            </div>
+            <div class="zone-card-metrics">
+              <span>Risk Score: <strong style="color: var(--color-critical);">94.6%</strong></span>
+              <span>Window: <strong>~45 min</strong></span>
+            </div>
+            <div class="zone-card-cta">Inspect Details →</div>
+          </div>
+
+          <!-- Zone 2: NH-7 Corridor (Critical) -->
+          <div class="zone-list-card" onclick="openZoneDetails('nh7-corridor')">
+            <div class="zone-card-top">
+              <span class="zone-name-title">NH-7 Km 42 (Helang)</span>
+              <span class="status-pill critical">CRITICAL</span>
+            </div>
+            <div class="zone-card-metrics">
+              <span>Risk Score: <strong style="color: var(--color-critical);">98.0%</strong></span>
+              <span>Window: <strong>Blocked</strong></span>
+            </div>
+            <div class="zone-card-cta">Inspect Details →</div>
+          </div>
+
+          <!-- Zone 3: Sector 5 Upper Ridge (High) -->
+          <div class="zone-list-card" onclick="openZoneDetails('sector-5')">
+            <div class="zone-card-top">
+              <span class="zone-name-title">Sector 5 Upper Ridge</span>
+              <span class="status-pill high">HIGH</span>
+            </div>
+            <div class="zone-card-metrics">
+              <span>Risk Score: <strong style="color: var(--color-high);">68.2%</strong></span>
+              <span>Window: <strong>~4 hrs</strong></span>
+            </div>
+            <div class="zone-card-cta">Inspect Details →</div>
+          </div>
+
+          <!-- Zone 4: Alaknanda Lower Basin (Moderate) -->
+          <div class="zone-list-card" onclick="openZoneDetails('alaknanda-basin')">
+            <div class="zone-card-top">
+              <span class="zone-name-title">Alaknanda Basin</span>
+              <span class="status-pill moderate">MODERATE</span>
+            </div>
+            <div class="zone-card-metrics">
+              <span>Risk Score: <strong style="color: var(--color-moderate);">44.0%</strong></span>
+              <span>Window: <strong>>12 hrs</strong></span>
+            </div>
+            <div class="zone-card-cta">Inspect Details →</div>
+          </div>
+
+        </div>
+
+      </section>
+
+    </div>
+  </main>
+
+  <!-- =====================================================================
+       PAGE 2 — DANGER ZONE DETAILS
+       ===================================================================== -->
+  <main class="admin-page-view" id="viewPage2Details">
+    <div class="page-content-wrapper zone-details-container">
+      
+      <!-- Top Zone Selection Ribbon -->
+      <div class="zone-selector-ribbon">
+        <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+          <span style="font-size: 0.8rem; font-weight: 700; color: var(--text-secondary);">Zone:</span>
+          <select class="zone-select-dropdown" id="zoneDetailSelect" onchange="onZoneDropdownChange(this.value)">
+            <option value="sector-4" selected>Sector 4 Slopes (Critical • 94.6%)</option>
+            <option value="nh7-corridor">NH-7 Corridor Km 42 (Critical • 98.0%)</option>
+            <option value="sector-5">Sector 5 Ridge (High • 68.2%)</option>
+            <option value="alaknanda-basin">Alaknanda Basin (Moderate • 44.0%)</option>
+          </select>
+          <button type="button" class="btn-sat-trigger" onclick="openSatelliteModal()" title="Inspect Satellite Sentinel-1, Sentinel-2 & Before/After">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="2"/><path d="M4.93 4.93a10 10 0 0 1 14.14 0"/><path d="M7.76 7.76a6 6 0 0 1 8.48 0"/><line x1="12" y1="2" x2="12" y2="4"/><line x1="12" y1="20" x2="12" y2="22"/><line x1="2" y1="12" x2="4" y2="12"/><line x1="20" y1="12" x2="22" y2="12"/></svg>
+            <span>Satellite ML Feeds</span>
+          </button>
+        </div>
+        <button type="button" class="btn-portal-link" onclick="switchAdminPage('page1')">
+          ← Overview
+        </button>
+      </div>
+
+      <!-- Header Section: Zone Name, Severity, Risk + Confidence Together, Risk Window -->
+      <section class="zone-detail-header-card">
+        <div class="zone-header-top-row">
+          <div class="zone-header-title-col">
+            <h2 id="detailZoneName">Sector 4 Slopes, Joshimath</h2>
+            <div style="font-size: 0.78rem; color: var(--text-muted); font-family: var(--font-main); margin-top: 2px;">
+              <span id="detailZoneCoords">30.5562° N, 79.5641° E (1,890m MSL)</span>
+            </div>
+          </div>
+          <div id="detailSeverityBadgeContainer">
+            <span class="status-pill critical" style="font-size: 0.85rem; padding: 4px 10px;">CRITICAL EVACUATION</span>
+          </div>
+        </div>
+
+        <div class="zone-header-metrics-row">
+          <div class="metric-pair-col">
+            <span class="metric-pair-label">Risk &amp; Confidence</span>
+            <div class="metric-pair-value" id="detailRiskAndConfidence">
+              <span style="color: var(--color-critical);">94.6%</span> <span style="font-size: 0.9rem; font-weight: 600; color: var(--text-muted);">(Conf: 93.2%)</span>
+            </div>
+          </div>
+          <div class="metric-pair-col">
+            <span class="metric-pair-label">Risk Window</span>
+            <div class="metric-pair-value" id="detailRiskWindow" style="color: var(--color-high);">~45 min</div>
+          </div>
+          <div class="metric-pair-col">
+            <span class="metric-pair-label">Relief Shelter</span>
+            <div class="metric-pair-value" id="detailReliefShelter">Govt College Camp #2</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Active Threat & Telemetry Indicators (Conditional) -->
+      <section class="threat-indicators-grid" id="detailFlagsContainer">
+        
+        <!-- Downstream Surge Indicator -->
+        <div class="threat-indicator-card surge-card" id="flagCascadingFlood">
+          <div class="threat-card-header">
+            <span class="threat-card-title">Downstream River Surge</span>
+            <span class="status-pill critical" id="surgeStatusBadge">+2.4m Surge</span>
+          </div>
+          <div class="threat-card-details">
+            <div class="threat-detail-row">
+              <span class="detail-label">Trigger:</span>
+              <span class="detail-val" id="surgeTriggerVal">Alaknanda gorge blockage</span>
+            </div>
+            <div class="threat-detail-row">
+              <span class="detail-label">Arrival:</span>
+              <span class="detail-val" id="surgeArrivalVal">45-75 min</span>
+            </div>
+            <div class="threat-detail-row">
+              <span class="detail-label">Action:</span>
+              <span class="detail-val" id="surgeActionVal" style="color: #991b1b; font-weight: 700;">Evacuate riverside</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Hardware & Sensor Disruption Indicator -->
+        <div class="threat-indicator-card hardware-card" id="flagDataSilence">
+          <div class="threat-card-header">
+            <span class="threat-card-title">Hardware Status</span>
+            <span class="status-pill critical" id="hardwareStatusBadge">Silent (Slope Shift)</span>
+          </div>
+          <div class="threat-card-details">
+            <div class="threat-detail-row">
+              <span class="detail-label">Station:</span>
+              <span class="detail-val" id="hardwareStationVal">Gateway GW-04 (Sector 4)</span>
+            </div>
+            <div class="threat-detail-row">
+              <span class="detail-label">Last Signal:</span>
+              <span class="detail-val" id="hardwareLastTxVal">12m ago (4.8°/hr tilt exceedance)</span>
+            </div>
+            <div class="threat-detail-row">
+              <span class="detail-label">Action:</span>
+              <span class="detail-val" id="hardwareActionVal" style="color: #be123c; font-weight: 700;">Classified as slope displacement</span>
+            </div>
+          </div>
+        </div>
+
+      </section>
+
+      <!-- Tactical Zone GIS Map & Contributing Telemetry Factors Grid -->
+      <section class="zone-gis-telemetry-grid">
+        
+        <!-- Left Column: Tactical GIS & Sensor Map for Selected Zone -->
+        <div class="zone-gis-panel">
+          <div class="panel-section-title" style="display: flex; justify-content: space-between; align-items: center;">
+            <span>Tactical GIS Map</span>
+            <span style="font-size: 0.72rem; color: var(--text-muted); font-family: var(--font-main);" id="zoneGisMetaTag">Real-time Terrain</span>
+          </div>
+          
+          <div class="zone-map-wrapper">
+            <div id="leafletZoneDetailMap"></div>
+            <div class="heatmap-legend-badge">
+              <span><strong style="color: #dc2626;">■</strong> Perimeter</span>
+              <span><strong style="color: #2563eb;">●</strong> Sensors</span>
+              <span><strong style="color: #9333ea;">▲</strong> Villages</span>
+              <span><strong style="color: #dc2626;">✖</strong> Road Block</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Right Column: Contributing Factors Section -->
+        <div class="operational-panel" style="margin-bottom: 0;">
+          <div class="panel-section-title">
+            <span>Contributing Factors</span>
+          </div>
+          
+          <div class="factors-list-grid" id="detailFactorsList">
+            <!-- Dynamically populated by admin.js -->
+          </div>
+        </div>
+
+      </section>
+
+      <!-- Affected Villages Section -->
+      <section class="operational-panel">
+        <div class="panel-section-title">
+          <span>Affected Villages</span>
+        </div>
+
+        <table class="operational-table">
+          <thead>
+            <tr>
+              <th>Village / Sector</th>
+              <th>Severity</th>
+              <th>Proximity</th>
+              <th>Road Access</th>
+              <th>Priority Score</th>
+            </tr>
+          </thead>
+          <tbody id="detailVillagesTableBody">
+            <tr>
+              <td><strong>Sector 4 Basti</strong></td>
+              <td><span class="status-pill critical">CRITICAL</span></td>
+              <td>0.4 km</td>
+              <td><span class="status-pill blocked">Cut Off (Km 42)</span></td>
+              <td><strong style="color: var(--color-critical);">Score: 9.8 / 10</strong></td>
+            </tr>
+            <tr>
+              <td><strong>Helang Lower Valley</strong></td>
+              <td><span class="status-pill critical">CRITICAL</span></td>
+              <td>1.2 km</td>
+              <td><span class="status-pill restricted">Bypass Active</span></td>
+              <td><strong style="color: var(--color-critical);">Score: 8.9 / 10</strong></td>
+            </tr>
+            <tr>
+              <td><strong>Sunil Gaon Ridge</strong></td>
+              <td><span class="status-pill high">HIGH</span></td>
+              <td>1.8 km</td>
+              <td><span class="status-pill open">Open Access</span></td>
+              <td><strong style="color: var(--color-high);">Score: 7.2 / 10</strong></td>
+            </tr>
+            <tr>
+              <td><strong>Govindghat Riverside</strong></td>
+              <td><span class="status-pill high">HIGH (Surge)</span></td>
+              <td>3.4 km</td>
+              <td><span class="status-pill open">Open Access</span></td>
+              <td><strong style="color: var(--color-high);">Score: 6.8 / 10</strong></td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <!-- Affected Roads Section -->
+      <section class="operational-panel">
+        <div class="panel-section-title">
+          <span>Affected Roads &amp; Corridors</span>
+        </div>
+
+        <table class="operational-table">
+          <thead>
+            <tr>
+              <th>Corridor</th>
+              <th>Status</th>
+              <th>Bypass Route</th>
+              <th>Detour &amp; Delay</th>
+            </tr>
+          </thead>
+          <tbody id="detailRoadsTableBody">
+            <tr>
+              <td><strong>NH-7 Km 42 (Helang)</strong></td>
+              <td><span class="status-pill blocked">Blocked</span></td>
+              <td>Upper Helang Bypass</td>
+              <td>14.8 km (+12 min)</td>
+            </tr>
+            <tr>
+              <td><strong>Joshimath ⇄ Auli Road</strong></td>
+              <td><span class="status-pill restricted">Restricted</span></td>
+              <td>Ropeway / 4WD Only</td>
+              <td>13.2 km (+25 min)</td>
+            </tr>
+            <tr>
+              <td><strong>Sector 4 Spur Road</strong></td>
+              <td><span class="status-pill restricted">At-Risk</span></td>
+              <td>College Ridge Track</td>
+              <td>2.1 km (+10 min)</td>
+            </tr>
+            <tr>
+              <td><strong>NH-7 North (Badrinath)</strong></td>
+              <td><span class="status-pill open">Open</span></td>
+              <td>Direct Highway</td>
+              <td>44.0 km (Nominal)</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <!-- Actions Section (Bottom of Page 2) -->
+      <section class="page2-actions-bar">
+        <button type="button" class="btn-action-secondary" onclick="window.print()">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+          <span>Export PDF</span>
+        </button>
+
+        <div style="display: flex; gap: 10px;">
+          <button type="button" class="btn-action-reject" onclick="promptRejectAlert()">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="6"/></svg>
+            <span>Reject / Archive</span>
+          </button>
+
+          <button type="button" class="btn-action-primary" onclick="openSendAlertConfirmModal()">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M4.9 19.1C1 15.2 1 8.8 4.9 4.9"/><circle cx="12" cy="12" r="2"/><path d="M19.1 4.9C23 8.8 23 15.2 19.1 19.1"/></svg>
+            <span>Dispatch Alert</span>
+          </button>
+        </div>
+      </section>
+
+    </div>
+  </main>
+
+  <!-- =====================================================================
+       PAGE 3 — ALERTS & HISTORY
+       ===================================================================== -->
+  <main class="admin-page-view" id="viewPage3History">
+    <div class="page-content-wrapper">
+      
+      <!-- Filter & Search Bar -->
+      <section class="history-filter-bar">
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <input type="text" class="search-input-field" id="historySearchInput" placeholder="Filter by zone or date..." oninput="filterHistoryTables()">
+          <select class="zone-select-dropdown" id="historyFilterZone" onchange="filterHistoryTables()">
+            <option value="all">All Zones</option>
+            <option value="Sector 4">Sector 4</option>
+            <option value="NH-7">NH-7</option>
+            <option value="Sector 5">Sector 5</option>
+          </select>
+        </div>
+        <div style="font-size: 0.78rem; color: var(--text-muted); font-family: var(--font-main);">
+          Live Audit Log
+        </div>
+      </section>
+
+      <!-- Section 1: Delivery Status of Dispatched Alerts -->
+      <section class="operational-panel">
+        <div class="panel-section-title">
+          <span>Dispatched Alerts Audit</span>
+        </div>
+
+        <table class="operational-table">
+          <thead>
+            <tr>
+              <th>Ref ID</th>
+              <th>Danger Zone</th>
+              <th>Time</th>
+              <th>Village Reach</th>
+              <th>Channel</th>
+              <th>Delivery</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody id="dispatchedAlertsTableBody">
+            <tr>
+              <td><code>#ALT-9041</code></td>
+              <td><strong>Sector 4 Slopes</strong></td>
+              <td>00:15 IST</td>
+              <td>Sector 4 (99%), Helang (94%), Sunil Gaon (96%)</td>
+              <td><span class="status-pill low">SMS + Siren</span></td>
+              <td><strong>98.4%</strong></td>
+              <td><span class="status-pill critical">Active</span></td>
+            </tr>
+            <tr>
+              <td><code>#ALT-8812</code></td>
+              <td><strong>NH-7 Corridor (Km 42)</strong></td>
+              <td>20:45 IST</td>
+              <td>Helang Transit (95%), Drivers (90%)</td>
+              <td><span class="status-pill low">Push + SMS</span></td>
+              <td><strong>92.5%</strong></td>
+              <td><span class="status-pill high">Bypass</span></td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <!-- Section 2: Rejected / False-Alarm Log -->
+      <section class="operational-panel">
+        <div class="panel-section-title">
+          <span>Rejected Dispatches Log</span>
+        </div>
+
+        <table class="operational-table">
+          <thead>
+            <tr>
+              <th>Ref ID</th>
+              <th>Danger Zone</th>
+              <th>Time</th>
+              <th>Officer</th>
+              <th>Reason / Notes</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody id="rejectedAlertsTableBody">
+            <tr>
+              <td><code>#REJ-1042</code></td>
+              <td><strong>Alaknanda Basin</strong></td>
+              <td>18:30 IST</td>
+              <td>Commander #104</td>
+              <td>Radar artifact resolved. River stage within 1.2m normal.</td>
+              <td><span class="status-pill open">Archived</span></td>
+            </tr>
+            <tr>
+              <td><code>#REJ-0988</code></td>
+              <td><strong>Sector 5 Ridge</strong></td>
+              <td>14:10 IST</td>
+              <td>Patrol #42</td>
+              <td>Minor surface crack checked on-site. Stable colluvium.</td>
+              <td><span class="status-pill open">Archived</span></td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+    </div>
+  </main>
+
+  <!-- =====================================================================
+       PAGE 4 — CITIZEN REPORTS & FIELD DISPATCH
+       ===================================================================== -->
+  <main class="admin-page-view" id="viewPage4Reports">
+    <div class="page-content-wrapper">
+      
+      <!-- Top Filter & Search Bar -->
+      <section class="history-filter-bar">
+        <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+          <input type="text" class="search-input-field" id="reportSearchInput" placeholder="Filter by report ID, location, or citizen..." oninput="filterCitizenReports()">
+          <div class="filter-pills-row" style="margin: 0;">
+            <button type="button" class="filter-pill active" onclick="filterReportsByStatus('all', this)">All (4)</button>
+            <button type="button" class="filter-pill" onclick="filterReportsByStatus('pending', this)">Pending Check (2)</button>
+            <button type="button" class="filter-pill" onclick="filterReportsByStatus('verified', this)">Verified (2)</button>
+            <button type="button" class="filter-pill" onclick="filterReportsByStatus('critical', this)">Critical (2)</button>
+          </div>
+        </div>
+        <div style="font-size: 0.78rem; color: var(--text-muted); font-family: var(--font-main);">
+          Live Citizen Telemetry Feed
+        </div>
+      </section>
+
+      <!-- Citizen Reports List Grid -->
+      <section class="reports-feed-grid" id="citizenReportsFeedContainer">
+        <!-- Dynamically rendered by admin.js -->
+      </section>
+
+    </div>
+  </main>
+
+  <!-- =====================================================================
+       CITIZEN REPORT PHOTO & EVIDENCE MODAL
+       ===================================================================== -->
+  <div class="modal-overlay-backdrop" id="citizenReportModal">
+    <div class="modal-card-box" style="max-width: 680px;">
+      
+      <div class="modal-card-header">
+        <span id="citizenModalTitle">Citizen Report Evidence &amp; Verification</span>
+        <button type="button" onclick="closeCitizenReportModal()" style="background:none; border:none; color:#ffffff; font-size:1.2rem; cursor:pointer;">✕</button>
+      </div>
+
+      <div class="modal-card-body" id="citizenModalBody">
+        <!-- Dynamically injected by admin.js -->
+      </div>
+
+      <div class="modal-card-footer" id="citizenModalFooter">
+        <button type="button" class="btn-action-secondary" onclick="closeCitizenReportModal()">Close</button>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- =====================================================================
+       CONFIRMATION STEP MODAL (BEFORE ALERT DISPATCH)
+       ===================================================================== -->
+  <div class="modal-overlay-backdrop" id="sendAlertConfirmModal">
+    <div class="modal-card-box">
+      
+      <div class="modal-card-header">
+        <span>Confirm Alert Broadcast</span>
+        <button type="button" onclick="closeSendAlertConfirmModal()" style="background:none; border:none; color:#ffffff; font-size:1.2rem; cursor:pointer;">✕</button>
+      </div>
+
+      <div class="modal-card-body">
+        <div style="font-size: 0.82rem; color: var(--text-secondary); margin-bottom: 8px;">
+          Review channel reachability before siren activation:
+        </div>
+
+        <table class="operational-table">
+          <thead>
+            <tr>
+              <th>Settlement</th>
+              <th>Relief Shelter</th>
+              <th>Channel</th>
+              <th>Reachability</th>
+            </tr>
+          </thead>
+          <tbody id="modalFeasibilityTableBody">
+            <tr>
+              <td><strong>Sector 4 Basti</strong></td>
+              <td>Govt College Camp #2</td>
+              <td><span class="status-pill low">Push + SMS + Siren</span></td>
+              <td><strong>99%</strong></td>
+            </tr>
+            <tr>
+              <td><strong>Helang Lower Valley</strong></td>
+              <td>Helang High School</td>
+              <td><span class="status-pill low">SMS + LoRa</span></td>
+              <td><strong>94%</strong></td>
+            </tr>
+            <tr>
+              <td><strong>Sunil Gaon Ridge</strong></td>
+              <td>Sports Stadium</td>
+              <td><span class="status-pill low">App + SMS</span></td>
+              <td><strong>96%</strong></td>
+            </tr>
+            <tr>
+              <td><strong>Govindghat Riverside</strong></td>
+              <td>High Ground Camp</td>
+              <td><span class="status-pill high">Siren #3 + Sat</span></td>
+              <td><strong>100%</strong></td>
+            </tr>
+          </tbody>
+        </table>
+
+        <div style="background: #fef2f2; border: 1px solid #fecaca; border-radius: var(--radius-xs); padding: 8px 12px; font-size: 0.76rem; color: #991b1b; display: flex; align-items: center; gap: 8px;">
+          <strong style="background: #be123c; color: #ffffff; padding: 1px 6px; border-radius: 3px; font-size: 0.68rem;">BROADCAST</strong>
+          <span>Triggers emergency popups, EAS sirens, and audio relays.</span>
+        </div>
+      </div>
+
+      <div class="modal-card-footer">
+        <button type="button" class="btn-action-secondary" onclick="closeSendAlertConfirmModal()">Cancel</button>
+        <button type="button" class="btn-action-primary" onclick="confirmAndDispatchAlert()">Transmit Broadcast</button>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- =====================================================================
+       STAT DETAIL MODAL
+       ===================================================================== -->
+  <div class="modal-overlay-backdrop" id="statDetailModal">
+    <div class="modal-card-box" style="max-width: 780px;">
+      
+      <div class="modal-card-header">
+        <span id="statDetailModalTitle">Telemetry Breakdown</span>
+        <button type="button" onclick="closeStatDetailModal()" style="background:none; border:none; color:#ffffff; font-size:1.2rem; cursor:pointer;">✕</button>
+      </div>
+
+      <div class="modal-card-body" id="statDetailModalBody">
+        <!-- Dynamically injected by admin.js -->
+      </div>
+
+      <div class="modal-card-footer">
+        <button type="button" class="btn-action-secondary" onclick="closeStatDetailModal()">Close</button>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- =====================================================================
+       SATELLITE FULL-RESOLUTION INSPECTOR MODAL
+       ===================================================================== -->
+  <div class="modal-overlay-backdrop" id="satelliteInspectorModal">
+    <div class="modal-card-box" style="max-width: 960px; width: 95vw;">
+      
+      <div class="modal-card-header">
+        <span id="satModalTitle">Satellite High-Resolution Earth Observation &amp; ML Vision Inspector</span>
+        <button type="button" onclick="closeSatelliteModal()" style="background:none; border:none; color:#ffffff; font-size:1.2rem; cursor:pointer;">✕</button>
+      </div>
+
+      <div class="modal-card-body" id="satModalBody" style="padding: 16px;">
+        <!-- Injected dynamically by admin.js -->
+      </div>
+
+      <div class="modal-card-footer">
+        <div style="font-size: 0.75rem; color: var(--text-muted); font-family: var(--font-main); margin-right: auto;" id="satModalFooterMeta">
+          ESA Copernicus Sentinel-1 SAR &amp; Sentinel-2 MSI Multi-Spectral Ingest • DDMA Chamoli
+        </div>
+        <button type="button" class="btn-action-secondary" onclick="closeSatelliteModal()">Close Inspector</button>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- Operational Toast Notification -->
+  <div class="operational-toast" id="operationalToast"></div>
+
+  <!-- Leaflet JS -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+
+  <!-- Admin Application Logic -->
+  <script src="admin.js"></script>
+</body>
+</html>
