@@ -1,0 +1,32 @@
+{
+  "name": "resilientguard-disaster-management",
+  "version": "1.0.0",
+  "description": "AI-Powered Early Landslide & Flood Warning Dashboard and Citizen Emergency System",
+  "main": "Frontend/index.html",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "serve:legacy": "npx -y serve Frontend -l 8000"
+  },
+  "keywords": [
+    "disaster-management",
+    "landslide",
+    "early-warning",
+    "web-gis",
+    "sih2026"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "leaflet": "^1.9.4",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "react-router-dom": "^7.18.3"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^6.1.1",
+    "vite": "^8.2.2"
+  }
+}
