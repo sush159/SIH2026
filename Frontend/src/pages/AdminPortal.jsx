@@ -169,7 +169,12 @@ export default function AdminPortal() {
 
     try {
       localStorage.setItem('resilientguard_latest_alert', JSON.stringify(payload));
-      window.dispatchEvent(new Event('storage'));
+      window.dispatchEvent(new CustomEvent('resilientguard_alert_dispatched', { detail: payload }));
+      if (typeof BroadcastChannel !== 'undefined') {
+        const bc = new BroadcastChannel('resilientguard_admin_alerts');
+        bc.postMessage(payload);
+        bc.close();
+      }
     } catch (e) {
       console.warn('LocalStorage error:', e);
     }

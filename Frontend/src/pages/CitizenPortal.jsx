@@ -83,14 +83,16 @@ export default function CitizenPortal() {
   const t = TRANSLATIONS[lang] || TRANSLATIONS.en;
   const riskInfo = RISK_DATA[currentRisk] || RISK_DATA.safe;
 
-  // Realistic Basemap Layer State
-  const [mapBasemap, setMapBasemap] = useState('topo'); // 'topo' | 'osm' | 'hot'
+  // Basemap Layer State (OpenStreetMap Streets View Default)
+  const [mapBasemap, setMapBasemap] = useState('osm'); // 'osm' | 'topo' | 'hot'
+  const [activeAltRoute, setActiveAltRoute] = useState(ROADS_DATA[0]?.alternateRoute || null);
 
   const mapContainerRef = useRef(null);
   const mapInstanceRef = useRef(null);
   const roadLayersRef = useRef({});
   const heatmapLayersRef = useRef([]);
   const altLayerRef = useRef(null);
+  const altRouteMarkerRef = useRef(null);
 
   const handleSwitchBasemap = (mode) => {
     setMapBasemap(mode);
@@ -545,20 +547,20 @@ export default function CitizenPortal() {
             },
             layers: [
               {
-                id: 'topo-layer',
-                type: 'raster',
-                source: 'topo-tiles',
-                layout: { visibility: 'visible' },
-                minzoom: 0,
-                maxzoom: 17
-              },
-              {
                 id: 'osm-layer',
                 type: 'raster',
                 source: 'osm-tiles',
-                layout: { visibility: 'none' },
+                layout: { visibility: 'visible' },
                 minzoom: 0,
                 maxzoom: 19
+              },
+              {
+                id: 'topo-layer',
+                type: 'raster',
+                source: 'topo-tiles',
+                layout: { visibility: 'none' },
+                minzoom: 0,
+                maxzoom: 17
               },
               {
                 id: 'hot-layer',
@@ -742,9 +744,59 @@ export default function CitizenPortal() {
             .addTo(map);
         });
 
+        // Click on Road lines for inspection popup
+        map.on('click', 'roads-line', (e) => {
+          if (!e.features || !e.features[0]) return;
+          const feat = e.features[0];
+          const matchedRoad = ROADS_DATA.find(r => r.id === feat.properties.id);
+          if (matchedRoad) {
+            setSelectedRoad(matchedRoad);
+            if (matchedRoad.alternateRoute) {
+              drawAltRoute(matchedRoad.alternateRoute, map, false);
+            }
+          }
+          new maplibregl.Popup()
+            .setLngLat(e.lngLat)
+            .setHTML(`
+              <div style="font-family: 'Plus Jakarta Sans', sans-serif; font-size: 0.82rem; padding: 4px;">
+                <strong style="color:${feat.properties.color}; font-size:0.88rem;">${feat.properties.name}</strong><br/>
+                <strong>Status:</strong> <span style="font-weight:700; color:${feat.properties.color};">${feat.properties.status}</span><br/>
+                <span>${feat.properties.statusText || ''}</span>
+              </div>
+            `)
+            .addTo(map);
+        });
+
+        // Click on Alternate Route Line on Map to view full Distance & Time
+        map.on('click', 'alt-route-line', (e) => {
+          if (!e.features || !e.features[0]) return;
+          const p = e.features[0].properties;
+          new maplibregl.Popup()
+            .setLngLat(e.lngLat)
+            .setHTML(`
+              <div style="font-family: 'Plus Jakarta Sans', sans-serif; font-size: 0.84rem; padding: 6px; min-width: 220px;">
+                <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 4px;">
+                  <span style="font-size: 1.1rem;">🛣️</span>
+                  <strong style="color: #059669; font-size: 0.92rem;">${p.name}</strong>
+                </div>
+                <div style="background: #f0fdf4; border-radius: 6px; padding: 6px 8px; margin: 4px 0 8px; border-left: 3px solid #10b981;">
+                  <div style="font-size: 0.78rem; font-weight: 800; color: #047857;">📏 Distance: ${p.distance}</div>
+                  <div style="font-size: 0.78rem; font-weight: 800; color: #047857;">⏱️ Travel Time: ${p.extraTime}</div>
+                  <div style="font-size: 0.74rem; color: #475569; margin-top: 2px;">🟢 Status: 100% Clear &amp; Safe Bypass</div>
+                </div>
+                <p style="margin: 0; font-size: 0.74rem; color: #64748b; line-height: 1.4;">
+                  ${p.notes || 'Reinforced bypass corridor clear of active landslide drainage.'}
+                </p>
+              </div>
+            `)
+            .addTo(map);
+        });
+
         // Cursor pointer on roads and zones
         map.on('mouseenter', 'roads-line', () => { map.getCanvas().style.cursor = 'pointer'; });
         map.on('mouseleave', 'roads-line', () => { map.getCanvas().style.cursor = ''; });
+        map.on('mouseenter', 'alt-route-line', () => { map.getCanvas().style.cursor = 'pointer'; });
+        map.on('mouseleave', 'alt-route-line', () => { map.getCanvas().style.cursor = ''; });
         map.on('mouseenter', 'danger-zones-fill', () => { map.getCanvas().style.cursor = 'pointer'; });
         map.on('mouseleave', 'danger-zones-fill', () => { map.getCanvas().style.cursor = ''; });
 
@@ -767,12 +819,20 @@ export default function CitizenPortal() {
             .addTo(map);
         });
 
+        // Automatically draw initial alternate route on map load
+        if (selectedRoad?.alternateRoute || ROADS_DATA[0]?.alternateRoute) {
+          drawAltRoute(selectedRoad?.alternateRoute || ROADS_DATA[0].alternateRoute, map, false);
+        }
+
         mapInstanceRef.current = map;
       } else {
         setTimeout(() => {
           if (mapInstanceRef.current) {
             mapInstanceRef.current.resize();
             mapInstanceRef.current.flyTo({ center: [selectedLocation.lng, selectedLocation.lat], zoom: 13 });
+            if (selectedRoad?.alternateRoute) {
+              drawAltRoute(selectedRoad.alternateRoute, mapInstanceRef.current, false);
+            }
           }
         }, 100);
       }
@@ -789,54 +849,65 @@ export default function CitizenPortal() {
     }
   }, [activeTab, selectedLocation]);
 
+  // Draw alternate route on maplibre map with distance & time badge marker
+  const drawAltRoute = (altRoute, mapInstance = mapInstanceRef.current, fitBounds = true) => {
+    if (!mapInstance || !altRoute || !altRoute.coords) return;
+    const altCoords = altRoute.coords.map(c => [c[1], c[0]]);
+
+    const source = mapInstance.getSource('alt-route-source');
+    if (source) {
+      source.setData({
+        type: 'FeatureCollection',
+        features: [
+          {
+            type: 'Feature',
+            properties: {
+              name: altRoute.name,
+              distance: altRoute.distance,
+              extraTime: altRoute.extraTime,
+              notes: altRoute.notes,
+              status: altRoute.status || 'Open'
+            },
+            geometry: {
+              type: 'LineString',
+              coordinates: altCoords
+            }
+          }
+        ]
+      });
+    }
+
+    // Clean up any existing marker
+    if (altRouteMarkerRef.current) {
+      try {
+        altRouteMarkerRef.current.remove();
+      } catch (e) {}
+      altRouteMarkerRef.current = null;
+    }
+
+    setActiveAltRoute(altRoute);
+
+    if (fitBounds) {
+      const bounds = altCoords.reduce(
+        (b, coord) => b.extend(coord),
+        new maplibregl.LngLatBounds(altCoords[0], altCoords[0])
+      );
+      mapInstance.fitBounds(bounds, { padding: 80, maxZoom: 15 });
+    }
+  };
+
   // Apply alternate route on map with permanent bypass badge
   const handleApplyAlternateRoute = (road) => {
-    if (!road || !road.alternateRoute) return;
+    const targetRoad = road || selectedRoad || ROADS_DATA[0];
+    if (!targetRoad || !targetRoad.alternateRoute) return;
+    const alt = targetRoad.alternateRoute;
+    setSelectedRoad(targetRoad);
     setActiveTab('map');
+
     setTimeout(() => {
       if (mapInstanceRef.current) {
-        const altCoords = road.alternateRoute.coords.map(c => [c[1], c[0]]);
-        const source = mapInstanceRef.current.getSource('alt-route-source');
-        if (source) {
-          source.setData({
-            type: 'FeatureCollection',
-            features: [
-              {
-                type: 'Feature',
-                properties: {
-                  name: road.alternateRoute.name,
-                  distance: road.alternateRoute.distance,
-                  extraTime: road.alternateRoute.extraTime,
-                  notes: road.alternateRoute.notes
-                },
-                geometry: {
-                  type: 'LineString',
-                  coordinates: altCoords
-                }
-              }
-            ]
-          });
-        }
-
-        // Compute bounding box and fit bounds
-        const bounds = altCoords.reduce(
-          (b, coord) => b.extend(coord),
-          new maplibregl.LngLatBounds(altCoords[0], altCoords[0])
-        );
-        mapInstanceRef.current.fitBounds(bounds, { padding: 60, maxZoom: 15 });
-
-        new maplibregl.Popup()
-          .setLngLat(altCoords[Math.floor(altCoords.length / 2)])
-          .setHTML(`
-            <div style="font-family: 'Plus Jakarta Sans', sans-serif; font-size: 0.8rem; padding: 4px;">
-              <strong style="color:#10b981;">Recommended Alternate Route: ${road.alternateRoute.name}</strong><br/>
-              Distance: ${road.alternateRoute.distance} (${road.alternateRoute.extraTime})<br/>
-              <em>${road.alternateRoute.notes}</em>
-            </div>
-          `)
-          .addTo(mapInstanceRef.current);
-
-        showAppToast(`Switched to alternate route: ${road.alternateRoute.name}`);
+        drawAltRoute(alt, mapInstanceRef.current, true);
+        showAppToast(`Alternate Route active: ${alt.name} (${alt.distance} • ${alt.extraTime})`);
       }
     }, 200);
   };
@@ -1328,7 +1399,7 @@ export default function CitizenPortal() {
 
               {/* Emergency Section - Visible ONLY when place is in DANGER */}
               {currentRisk === 'danger' && (
-                <article className="emergency-card" id="emergencySection" style={{ marginTop: '20px', display: 'block' }}>
+                <article className="emergency-card" id="emergencySection" style={{ marginTop: '20px' }}>
                   <div className="emergency-header">
                     <div className="emergency-title">
                       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
@@ -1349,7 +1420,7 @@ export default function CitizenPortal() {
                       <span data-i18n="callEmergency112">{t.callEmergency112}</span>
                     </a>
 
-                    <a href="tel:1077" className="sos-btn" style={{ background: '#be123c' }} id="sosCall1077">
+                    <a href="tel:1077" className="sos-btn" style={{ background: '#9f1239' }} id="sosCall1077">
                       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                         <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z" />
                       </svg>
@@ -1361,6 +1432,7 @@ export default function CitizenPortal() {
                   <button
                     type="button"
                     id="btnHomeSoundEmergencyAlert"
+                    className="emergency-siren-cta-btn"
                     onClick={() => {
                       unlockAudio();
                       const payload = liveAdminAlerts[0] || {
@@ -1369,8 +1441,8 @@ export default function CitizenPortal() {
                         zoneName: selectedLocation.name,
                         headline: `HIGH LANDSLIDE EVACUATION ALERT: ${selectedLocation.name.toUpperCase()}`,
                         headlineHi: `उच्च भूस्खलन निकासी चेतावनी: ${(selectedLocation.nameHi || selectedLocation.name).toUpperCase()}`,
-                        desc: `Critical slope instability, ground saturation, and heavy precipitation detected in ${selectedLocation.name}. District Disaster Control advises immediate evacuation to nearest safe shelter.`,
-                        descHi: `गंभीर ढलान अस्थिरता, मिट्टी की नमी एवं अत्यधिक वर्षा दर्ज की गई है। आपदा नियंत्रण कक्ष तुरंत निकटतम सुरक्षित आश्रय में जाने की सलाह देता है।`,
+                        desc: 'ALERT! IMMEDIATE EVACUATION HAS BEEN REQUESTED DUE TO LANDSLIDE',
+                        descHi: `सावधान! भूस्खलन के कारण तत्काल खाली करने का अनुरोध किया गया है।`,
                         severity: 'danger',
                         shelter: 'Shillong Municipal Relief Center #1',
                         shelterHi: 'शिलांग नगर राहत केंद्र #1',
@@ -1389,24 +1461,6 @@ export default function CitizenPortal() {
                       setShowEmergencyPopup(true);
                       setIsMuted(false);
                       playEmergencySequence(payload);
-                    }}
-                    style={{
-                      width: '100%',
-                      background: 'linear-gradient(135deg, #dc2626 0%, #b91c1c 100%)',
-                      color: '#ffffff',
-                      border: 'none',
-                      padding: '13px 18px',
-                      borderRadius: '12px',
-                      fontSize: '0.9rem',
-                      fontWeight: 800,
-                      cursor: 'pointer',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      gap: '10px',
-                      boxShadow: '0 4px 14px rgba(220, 38, 38, 0.35)',
-                      letterSpacing: '0.01em',
-                      transition: 'all 0.18s ease'
                     }}
                   >
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.3">
@@ -1552,19 +1606,19 @@ export default function CitizenPortal() {
                 <div className="map-basemap-switcher" id="mapBasemapSwitcher">
                   <button
                     type="button"
+                    className={`basemap-switcher-btn ${mapBasemap === 'osm' ? 'active' : ''}`}
+                    onClick={() => handleSwitchBasemap('osm')}
+                    title="Standard OpenStreetMap Streets & Urban Grid (Default)"
+                  >
+                    🗺️ Streets
+                  </button>
+                  <button
+                    type="button"
                     className={`basemap-switcher-btn ${mapBasemap === 'topo' ? 'active' : ''}`}
                     onClick={() => handleSwitchBasemap('topo')}
                     title="Realistic Topographic Mountain Elevation & Contour Relief"
                   >
                     🏔️ Realistic Topo
-                  </button>
-                  <button
-                    type="button"
-                    className={`basemap-switcher-btn ${mapBasemap === 'osm' ? 'active' : ''}`}
-                    onClick={() => handleSwitchBasemap('osm')}
-                    title="Standard OpenStreetMap Streets & Urban Grid"
-                  >
-                    🗺️ Streets
                   </button>
                   <button
                     type="button"
@@ -1715,13 +1769,19 @@ export default function CitizenPortal() {
                         <span>Alternate Route Available</span>
                       </div>
                       <div className="alt-route-title" id="inspectorAltName">{selectedRoad.alternateRoute.name}</div>
-                      <div className="alt-route-stats" id="inspectorAltStats">
-                        <span className="alt-stat-pill safe" id="inspectorAltStatus">Open</span>
-                        <span id="inspectorAltTime">{selectedRoad.alternateRoute.extraTime}</span>
-                        <span>&bull;</span>
-                        <span id="inspectorAltDist">{selectedRoad.alternateRoute.distance}</span>
+                      
+                      <div className="alt-route-stats" id="inspectorAltStats" style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', margin: '6px 0' }}>
+                        <span className="alt-stat-pill safe" id="inspectorAltStatus" style={{ padding: '3px 8px' }}>Open &amp; Safe</span>
+                        <span style={{ background: '#dcfce7', color: '#166534', fontWeight: 800, padding: '3px 8px', borderRadius: '6px', fontSize: '0.76rem', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                          📏 <strong>{selectedRoad.alternateRoute.distance}</strong>
+                        </span>
+                        <span style={{ background: '#dcfce7', color: '#166534', fontWeight: 800, padding: '3px 8px', borderRadius: '6px', fontSize: '0.76rem', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                          ⏱️ <strong>{selectedRoad.alternateRoute.extraTime}</strong>
+                        </span>
                       </div>
-                      <div className="alt-route-note" id="inspectorAltNote">{selectedRoad.alternateRoute.notes}</div>
+
+                      <div className="alt-route-note" id="inspectorAltNote" style={{ fontSize: '0.74rem', color: '#475569', lineHeight: 1.4 }}>{selectedRoad.alternateRoute.notes}</div>
+                      
                       <button
                         type="button"
                         className="btn-activate-alt-route"
@@ -1729,7 +1789,7 @@ export default function CitizenPortal() {
                         onClick={() => handleApplyAlternateRoute(selectedRoad)}
                       >
                         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polygon points="3 11 22 2 13 21 11 13 3 11" /></svg>
-                        <span>Use Alternate Route</span>
+                        <span>Show &amp; Focus Alternate Route on Map</span>
                       </button>
                     </div>
                   ) : (

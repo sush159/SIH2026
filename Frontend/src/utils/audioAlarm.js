@@ -14,6 +14,10 @@ let isEmergencyLoopActive = false;
 let currentSequenceToken = 0;
 let currentSpeechUtterance = null;
 
+// Mandated English voice alert text
+export const MANDATORY_ENGLISH_VOICE = "ALERT! IMMEDIATE EVACUATION HAS BEEN REQUESTED DUE TO LANDSLIDE";
+export const DEFAULT_HINDI_VOICE = "सावधान! भूस्खलन के कारण तत्काल खाली करने का अनुरोध किया गया है।";
+
 /**
  * Initialize and unlock Web Audio Context across modern browsers
  */
@@ -68,7 +72,7 @@ function scheduleTimeout(fn, delayMs) {
 }
 
 /**
- * Stop alarm siren and cleanup all active audio nodes safely
+ * Stop alarm siren and cleanup all active audio nodes safely and immediately
  */
 export function stopAlarmSiren() {
   try {
@@ -81,7 +85,7 @@ export function stopAlarmSiren() {
       try {
         const now = audioCtx.currentTime;
         masterGain.gain.cancelScheduledValues(now);
-        masterGain.gain.setValueAtTime(0.0001, now);
+        masterGain.gain.setValueAtTime(0, now);
       } catch (e) {}
     }
 
@@ -257,7 +261,10 @@ export function speakVoiceAlert(text, lang = 'en', onComplete = null, token = nu
   }
 
   try {
-    // Cancel any old queued speech immediately
+    // 1. Unconditionally stop siren before initiating any voice
+    stopAlarmSiren();
+
+    // 2. Cancel any pending speech synthesis
     try {
       window.speechSynthesis.cancel();
     } catch (e) {}
@@ -279,8 +286,8 @@ export function speakVoiceAlert(text, lang = 'en', onComplete = null, token = nu
       if (onComplete) onComplete();
     };
 
-    // Calculate maximum realistic speech duration (approx 6-8 seconds)
-    const timeoutMs = Math.min(9000, Math.max(4500, (text || '').length * 80));
+    // Calculate maximum realistic speech duration safety timeout
+    const timeoutMs = Math.min(10000, Math.max(4500, (text || '').length * 90));
     localSafetyTimer = setTimeout(finishCallback, timeoutMs);
     activeTimeouts.push(localSafetyTimer);
 
@@ -295,8 +302,9 @@ export function speakVoiceAlert(text, lang = 'en', onComplete = null, token = nu
           window.speechSynthesis.resume();
         }
 
-        const utterance = new SpeechSynthesisUtterance(text);
-        utterance.rate = 0.92;
+        const speechText = lang === 'en' ? MANDATORY_ENGLISH_VOICE : (text || DEFAULT_HINDI_VOICE);
+        const utterance = new SpeechSynthesisUtterance(speechText);
+        utterance.rate = 0.90; // Intelligible, authoritative broadcast pace
         utterance.pitch = 1.0;
         utterance.volume = 1.0;
 
@@ -316,8 +324,12 @@ export function speakVoiceAlert(text, lang = 'en', onComplete = null, token = nu
           utterance.lang = 'en-US';
         }
 
-        utterance.onend = finishCallback;
-        utterance.onerror = () => {
+        utterance.onend = () => {
+          // Extra 120ms buffer to ensure speech buffer has cleared from soundcard
+          setTimeout(finishCallback, 120);
+        };
+        utterance.onerror = (err) => {
+          console.warn('Speech synthesis error:', err);
           finishCallback();
         };
 
@@ -330,8 +342,8 @@ export function speakVoiceAlert(text, lang = 'en', onComplete = null, token = nu
       }
     };
 
-    // Wait 60ms after cancel before dispatching speak
-    setTimeout(speakNow, 60);
+    // Wait 100ms after cancel before dispatching speak for clean state transition
+    setTimeout(speakNow, 100);
   } catch (err) {
     console.warn('Speech synthesis outer error:', err);
     if (onComplete) onComplete();
@@ -340,15 +352,15 @@ export function speakVoiceAlert(text, lang = 'en', onComplete = null, token = nu
 
 /**
  * Play full emergency disaster audio sequence on a STRICT CONTINUOUS NON-OVERLAPPING LOOP:
- * 1. 2.5s Alarm Siren Beep
- * 2. 400ms Dead Silence Gap
+ * 1. 2.0s Alarm Siren Buzzer
+ * 2. 900ms Dead Silence Gap
  * 3. Hindi Voice Advisory (Siren is 100% OFF)
- * 4. 400ms Dead Silence Gap
- * 5. 2.5s Alarm Siren Beep
- * 6. 400ms Dead Silence Gap
- * 7. English Voice Advisory (Siren is 100% OFF)
- * 8. 500ms Dead Silence Gap
- * 9. Repeat until dismissed/muted
+ * 4. 900ms Dead Silence Gap
+ * 5. 2.0s Alarm Siren Buzzer
+ * 6. 900ms Dead Silence Gap
+ * 7. English Voice: "ALERT! IMMEDIATE EVACUATION HAS BEEN REQUESTED DUE TO LANDSLIDE" (Siren is 100% OFF)
+ * 8. 1200ms Dead Silence Gap
+ * 9. Repeat cleanly until dismissed or muted
  */
 export function playEmergencySequence(options = {}) {
   // Stop all active audio, timers, and utterances and advance sequence token
@@ -364,8 +376,13 @@ export function playEmergencySequence(options = {}) {
   isEmergencyLoopActive = true;
 
   const sirenTone = options.siren || 'eas';
-  const hindiText = options.hindiText || 'सावधान! आपातकालीन आपदा चेतावनी। कृपया तुरंत सुरक्षित आश्रय पर जाएं।';
-  const englishText = options.desc || options.description || 'Attention! Emergency disaster advisory. Please proceed immediately to designated safe shelter.';
+  const hindiText = options.hindiText || DEFAULT_HINDI_VOICE;
+  const englishText = MANDATORY_ENGLISH_VOICE;
+
+  const SIREN_DURATION_MS = 2000;  // 2.0s siren burst
+  const GAP_AFTER_SIREN_MS = 900;   // 900ms dead silence gap between siren & speech
+  const GAP_AFTER_VOICE_MS = 900;   // 900ms dead silence gap between speech & siren
+  const LOOP_RESTART_GAP_MS = 1200; // 1.2s dead silence gap before repeating sequence
 
   function step1_Siren() {
     if (!isEmergencyLoopActive || seqId !== currentSequenceToken) return;
@@ -381,11 +398,11 @@ export function playEmergencySequence(options = {}) {
       stopAlarmSiren();
       if (!isEmergencyLoopActive || seqId !== currentSequenceToken) return;
 
-      // 400ms Dead Silence buffer before Hindi speech starts
+      // 900ms Dead Silence buffer before Hindi speech starts
       scheduleTimeout(() => {
         step2_HindiVoice();
-      }, 400);
-    }, 2600); // 2.6s siren burst
+      }, GAP_AFTER_SIREN_MS);
+    }, SIREN_DURATION_MS);
   }
 
   function step2_HindiVoice() {
@@ -394,10 +411,10 @@ export function playEmergencySequence(options = {}) {
     speakVoiceAlert(hindiText, 'hi', () => {
       if (!isEmergencyLoopActive || seqId !== currentSequenceToken) return;
 
-      // 400ms Dead Silence buffer after speech ends
+      // 900ms Dead Silence buffer after speech ends before siren resumes
       scheduleTimeout(() => {
         step3_Siren();
-      }, 400);
+      }, GAP_AFTER_VOICE_MS);
     }, seqId);
   }
 
@@ -414,11 +431,11 @@ export function playEmergencySequence(options = {}) {
       stopAlarmSiren();
       if (!isEmergencyLoopActive || seqId !== currentSequenceToken) return;
 
-      // 400ms Dead Silence buffer before English speech starts
+      // 900ms Dead Silence buffer before English speech starts
       scheduleTimeout(() => {
         step4_EnglishVoice();
-      }, 400);
-    }, 2600); // 2.6s siren burst
+      }, GAP_AFTER_SIREN_MS);
+    }, SIREN_DURATION_MS);
   }
 
   function step4_EnglishVoice() {
@@ -427,12 +444,12 @@ export function playEmergencySequence(options = {}) {
     speakVoiceAlert(englishText, 'en', () => {
       if (!isEmergencyLoopActive || seqId !== currentSequenceToken) return;
 
-      // 500ms Dead Silence buffer then repeat entire loop cleanly
+      // 1200ms Dead Silence buffer then repeat entire loop cleanly
       scheduleTimeout(() => {
         if (isEmergencyLoopActive && seqId === currentSequenceToken) {
           step1_Siren();
         }
-      }, 500);
+      }, LOOP_RESTART_GAP_MS);
     }, seqId);
   }
 
@@ -456,3 +473,4 @@ export function stopAllEmergencyAudio() {
   }
   currentSpeechUtterance = null;
 }
+
