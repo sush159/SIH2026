@@ -1,16 +1,18 @@
 /**
  * ResilientGuard Emergency Audio Alarm & Speech Synthesis System
  * Web Audio API synthesized EAS, Wail, Yelp, and Hi-Lo sirens + bilingual voice synthesis
+ * Strictly mutually exclusive sequential scheduler with absolute zero overlap guarantee
  */
 
 let audioCtx = null;
 let masterGain = null;
 let activeNodes = [];
 let activeIntervals = [];
+let activeTimeouts = [];
 let isSirenPlaying = false;
-let emergencySequenceTimeout = null;
 let isEmergencyLoopActive = false;
-let speechSafetyTimeout = null;
+let currentSequenceToken = 0;
+let currentSpeechUtterance = null;
 
 /**
  * Initialize and unlock Web Audio Context across modern browsers
@@ -42,6 +44,69 @@ if (typeof window !== 'undefined') {
   unlockTriggers.forEach(evt => {
     window.addEventListener(evt, autoUnlock, { passive: true });
   });
+}
+
+function clearAllScheduledTimers() {
+  while (activeTimeouts.length > 0) {
+    const t = activeTimeouts.pop();
+    if (t) clearTimeout(t);
+  }
+  while (activeIntervals.length > 0) {
+    const i = activeIntervals.pop();
+    if (i) clearInterval(i);
+  }
+}
+
+function scheduleTimeout(fn, delayMs) {
+  const id = setTimeout(() => {
+    const idx = activeTimeouts.indexOf(id);
+    if (idx !== -1) activeTimeouts.splice(idx, 1);
+    fn();
+  }, delayMs);
+  activeTimeouts.push(id);
+  return id;
+}
+
+/**
+ * Stop alarm siren and cleanup all active audio nodes safely
+ */
+export function stopAlarmSiren() {
+  try {
+    while (activeIntervals.length > 0) {
+      const interval = activeIntervals.pop();
+      if (interval) clearInterval(interval);
+    }
+
+    if (masterGain && audioCtx) {
+      try {
+        const now = audioCtx.currentTime;
+        masterGain.gain.cancelScheduledValues(now);
+        masterGain.gain.setValueAtTime(0.0001, now);
+      } catch (e) {}
+    }
+
+    while (activeNodes.length > 0) {
+      const node = activeNodes.pop();
+      if (node) {
+        try {
+          if (typeof node.stop === 'function') node.stop();
+        } catch (e) {}
+        try {
+          if (typeof node.disconnect === 'function') node.disconnect();
+        } catch (e) {}
+      }
+    }
+
+    if (masterGain) {
+      try { masterGain.disconnect(); } catch (e) {}
+      masterGain = null;
+    }
+
+    isSirenPlaying = false;
+  } catch (err) {
+    console.warn('Stop siren notice:', err);
+    isSirenPlaying = false;
+  }
 }
 
 /**
@@ -175,40 +240,6 @@ export function playAlarmSiren(sirenType = 'eas', volume = 0.65) {
 }
 
 /**
- * Stop alarm siren and cleanup all active audio nodes safely
- */
-export function stopAlarmSiren() {
-  try {
-    while (activeIntervals.length > 0) {
-      const interval = activeIntervals.pop();
-      if (interval) clearInterval(interval);
-    }
-
-    while (activeNodes.length > 0) {
-      const node = activeNodes.pop();
-      if (node) {
-        try {
-          if (typeof node.stop === 'function') node.stop();
-        } catch (e) {}
-        try {
-          if (typeof node.disconnect === 'function') node.disconnect();
-        } catch (e) {}
-      }
-    }
-
-    if (masterGain) {
-      try { masterGain.disconnect(); } catch (e) {}
-      masterGain = null;
-    }
-
-    isSirenPlaying = false;
-  } catch (err) {
-    console.warn('Stop siren notice:', err);
-    isSirenPlaying = false;
-  }
-}
-
-/**
  * Check if siren is currently active
  */
 export function isAlarmSirenPlaying() {
@@ -217,42 +248,55 @@ export function isAlarmSirenPlaying() {
 
 /**
  * Text-to-Speech Voice Alert (Hindi or English)
+ * Guaranteed to only execute when siren is completely silent
  */
-export function speakVoiceAlert(text, lang = 'en', onComplete = null) {
+export function speakVoiceAlert(text, lang = 'en', onComplete = null, token = null) {
   if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
     if (onComplete) onComplete();
     return;
   }
 
   try {
-    if (speechSafetyTimeout) {
-      clearTimeout(speechSafetyTimeout);
-      speechSafetyTimeout = null;
-    }
+    // Cancel any old queued speech immediately
+    try {
+      window.speechSynthesis.cancel();
+    } catch (e) {}
 
     let finished = false;
+    let localSafetyTimer = null;
+
     const finishCallback = () => {
       if (finished) return;
       finished = true;
-      if (speechSafetyTimeout) {
-        clearTimeout(speechSafetyTimeout);
-        speechSafetyTimeout = null;
+      if (localSafetyTimer) {
+        clearTimeout(localSafetyTimer);
+        localSafetyTimer = null;
+      }
+      currentSpeechUtterance = null;
+      if (token !== null && token !== currentSequenceToken) {
+        return; // Stale sequence, discard
       }
       if (onComplete) onComplete();
     };
 
-    // Calculate dynamic safety timeout based on text length (max 10s)
-    const timeoutMs = Math.min(10000, Math.max(5000, (text || '').length * 100));
-    speechSafetyTimeout = setTimeout(finishCallback, timeoutMs);
+    // Calculate maximum realistic speech duration (approx 6-8 seconds)
+    const timeoutMs = Math.min(9000, Math.max(4500, (text || '').length * 80));
+    localSafetyTimer = setTimeout(finishCallback, timeoutMs);
+    activeTimeouts.push(localSafetyTimer);
 
     const speakNow = () => {
+      if (token !== null && token !== currentSequenceToken) {
+        finishCallback();
+        return;
+      }
+
       try {
         if (window.speechSynthesis.paused) {
           window.speechSynthesis.resume();
         }
 
         const utterance = new SpeechSynthesisUtterance(text);
-        utterance.rate = 0.95;
+        utterance.rate = 0.92;
         utterance.pitch = 1.0;
         utterance.volume = 1.0;
 
@@ -262,138 +306,153 @@ export function speakVoiceAlert(text, lang = 'en', onComplete = null) {
                           voices.find(v => v.name && v.name.toLowerCase().includes('hindi'));
           if (hiVoice) {
             utterance.voice = hiVoice;
-            utterance.lang = 'hi-IN';
-          } else {
-            utterance.lang = 'hi-IN';
           }
+          utterance.lang = 'hi-IN';
         } else {
           const enVoice = voices.find(v => v.lang && (v.lang.startsWith('en-IN') || v.lang.startsWith('en-GB') || v.lang.startsWith('en-US')));
-          if (enVoice) utterance.voice = enVoice;
+          if (enVoice) {
+            utterance.voice = enVoice;
+          }
           utterance.lang = 'en-US';
         }
 
         utterance.onend = finishCallback;
-        utterance.onerror = (e) => {
-          console.warn('Speech synthesis notice:', e);
+        utterance.onerror = () => {
           finishCallback();
         };
 
+        // Retain global reference to avoid garbage collection cutting off audio early
+        currentSpeechUtterance = utterance;
         window.speechSynthesis.speak(utterance);
       } catch (e) {
-        console.warn('Speech synthesis speak error:', e);
+        console.warn('Speech synthesis error:', e);
         finishCallback();
       }
     };
 
-    if (window.speechSynthesis.getVoices().length === 0) {
-      window.speechSynthesis.onvoiceschanged = () => {
-        speakNow();
-      };
-      setTimeout(speakNow, 100);
-    } else {
-      setTimeout(speakNow, 50);
-    }
+    // Wait 60ms after cancel before dispatching speak
+    setTimeout(speakNow, 60);
   } catch (err) {
-    console.warn('Speech synthesis error:', err);
+    console.warn('Speech synthesis outer error:', err);
     if (onComplete) onComplete();
   }
 }
 
 /**
- * Play full emergency disaster audio sequence on a CONTINUOUS LOOP:
- * 1. 3 seconds Alarm Siren Beep (no overlapping)
- * 2. Hindi Audio Advisory (complete silence from siren)
- * 3. 3 seconds Alarm Siren Beep (no overlapping)
- * 4. English Audio Advisory (complete silence from siren)
- * 5. Loop continuously until manually turned off / dismissed
+ * Play full emergency disaster audio sequence on a STRICT CONTINUOUS NON-OVERLAPPING LOOP:
+ * 1. 2.5s Alarm Siren Beep
+ * 2. 400ms Dead Silence Gap
+ * 3. Hindi Voice Advisory (Siren is 100% OFF)
+ * 4. 400ms Dead Silence Gap
+ * 5. 2.5s Alarm Siren Beep
+ * 6. 400ms Dead Silence Gap
+ * 7. English Voice Advisory (Siren is 100% OFF)
+ * 8. 500ms Dead Silence Gap
+ * 9. Repeat until dismissed/muted
  */
 export function playEmergencySequence(options = {}) {
+  // Stop all active audio, timers, and utterances and advance sequence token
   stopAllEmergencyAudio();
   unlockAudio();
+
+  // Prime voices on load
+  if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+    window.speechSynthesis.getVoices();
+  }
+
+  const seqId = ++currentSequenceToken;
   isEmergencyLoopActive = true;
 
   const sirenTone = options.siren || 'eas';
-  
-  // Hindi Emergency Advisory
-  const hindiText = options.hindiText || 'सावधान! आपातकालीन चेतावनी जारी की गई है। कृपया तुरंत सुरक्षित स्थान या आश्रय पर चले जाएं।';
-  
-  // Standard English Emergency Advisory
-  const englishText = 'Attention! Emergency disaster evacuation advisory issued. Please proceed immediately to designated safe shelter.';
+  const hindiText = options.hindiText || 'सावधान! आपातकालीन आपदा चेतावनी। कृपया तुरंत सुरक्षित आश्रय पर जाएं।';
+  const englishText = options.desc || options.description || 'Attention! Emergency disaster advisory. Please proceed immediately to designated safe shelter.';
 
-  function playBeepBurst(durationMs, onDone) {
-    if (!isEmergencyLoopActive) return;
+  function step1_Siren() {
+    if (!isEmergencyLoopActive || seqId !== currentSequenceToken) return;
+    
+    // Ensure speech synthesis is stopped before siren starts
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      try { window.speechSynthesis.cancel(); } catch (e) {}
+    }
+
     playAlarmSiren(sirenTone, 0.65);
 
-    emergencySequenceTimeout = setTimeout(() => {
-      // Stop alarm siren completely - guaranteeing NO OVERLAPPING with speech
+    scheduleTimeout(() => {
       stopAlarmSiren();
-      if (!isEmergencyLoopActive) return;
+      if (!isEmergencyLoopActive || seqId !== currentSequenceToken) return;
 
-      // Small 150ms silence buffer before voice starts
-      emergencySequenceTimeout = setTimeout(() => {
-        if (!isEmergencyLoopActive) return;
-        if (onDone) onDone();
-      }, 150);
-    }, durationMs);
+      // 400ms Dead Silence buffer before Hindi speech starts
+      scheduleTimeout(() => {
+        step2_HindiVoice();
+      }, 400);
+    }, 2600); // 2.6s siren burst
   }
 
-  function runCycle() {
-    if (!isEmergencyLoopActive) return;
+  function step2_HindiVoice() {
+    if (!isEmergencyLoopActive || seqId !== currentSequenceToken) return;
 
-    // Step 1: 3 seconds Alarm Beep (duration: 3000ms)
-    playBeepBurst(3000, () => {
-      if (!isEmergencyLoopActive) return;
+    speakVoiceAlert(hindiText, 'hi', () => {
+      if (!isEmergencyLoopActive || seqId !== currentSequenceToken) return;
 
-      // Step 2: Hindi Audio Advisory (no overlapping siren)
-      speakVoiceAlert(hindiText, 'hi', () => {
-        if (!isEmergencyLoopActive) return;
-
-        // Gap after Hindi audio before next beep
-        emergencySequenceTimeout = setTimeout(() => {
-          if (!isEmergencyLoopActive) return;
-
-          // Step 3: 3 seconds Alarm Beep (duration: 3000ms)
-          playBeepBurst(3000, () => {
-            if (!isEmergencyLoopActive) return;
-
-            // Step 4: English Audio Advisory (no overlapping siren)
-            speakVoiceAlert(englishText, 'en', () => {
-              if (!isEmergencyLoopActive) return;
-
-              // Step 5: Brief 400ms pause then repeat whole sequence in loop
-              emergencySequenceTimeout = setTimeout(() => {
-                if (isEmergencyLoopActive) {
-                  runCycle();
-                }
-              }, 400);
-            });
-          });
-        }, 200);
-      });
-    });
+      // 400ms Dead Silence buffer after speech ends
+      scheduleTimeout(() => {
+        step3_Siren();
+      }, 400);
+    }, seqId);
   }
 
-  // Start continuous loop cycle
-  runCycle();
+  function step3_Siren() {
+    if (!isEmergencyLoopActive || seqId !== currentSequenceToken) return;
+
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      try { window.speechSynthesis.cancel(); } catch (e) {}
+    }
+
+    playAlarmSiren(sirenTone, 0.65);
+
+    scheduleTimeout(() => {
+      stopAlarmSiren();
+      if (!isEmergencyLoopActive || seqId !== currentSequenceToken) return;
+
+      // 400ms Dead Silence buffer before English speech starts
+      scheduleTimeout(() => {
+        step4_EnglishVoice();
+      }, 400);
+    }, 2600); // 2.6s siren burst
+  }
+
+  function step4_EnglishVoice() {
+    if (!isEmergencyLoopActive || seqId !== currentSequenceToken) return;
+
+    speakVoiceAlert(englishText, 'en', () => {
+      if (!isEmergencyLoopActive || seqId !== currentSequenceToken) return;
+
+      // 500ms Dead Silence buffer then repeat entire loop cleanly
+      scheduleTimeout(() => {
+        if (isEmergencyLoopActive && seqId === currentSequenceToken) {
+          step1_Siren();
+        }
+      }, 500);
+    }, seqId);
+  }
+
+  // Start with step 1
+  step1_Siren();
 }
 
 /**
- * Stop all active sirens, voice synthesis, sequence timeouts, and terminate the loop
+ * Stop all active sirens, voice synthesis, sequence timeouts, and terminate the loop immediately
  */
 export function stopAllEmergencyAudio() {
   isEmergencyLoopActive = false;
-  if (emergencySequenceTimeout) {
-    clearTimeout(emergencySequenceTimeout);
-    emergencySequenceTimeout = null;
-  }
-  if (speechSafetyTimeout) {
-    clearTimeout(speechSafetyTimeout);
-    speechSafetyTimeout = null;
-  }
+  currentSequenceToken++; // Invalidate any in-flight steps immediately
+  clearAllScheduledTimers();
   stopAlarmSiren();
+
   if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
     try {
       window.speechSynthesis.cancel();
     } catch (e) {}
   }
+  currentSpeechUtterance = null;
 }

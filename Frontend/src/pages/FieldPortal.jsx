@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
-import L from 'leaflet';
+import * as maplibregl from 'maplibre-gl';
+import 'maplibre-gl/dist/maplibre-gl.css';
 import '../styles/field.css';
 import { OFFICER_LOCATION, INITIAL_FIELD_TASKS } from '../utils/fieldData';
 
@@ -204,61 +205,92 @@ export default function FieldPortal() {
     }
   };
 
-  // Tactical Map Initialization
+  // Tactical Map Initialization (MapLibre GL 3D)
   useEffect(() => {
     if (activePage === 'page4' && fieldMapRef.current) {
       if (!fieldMapInstanceRef.current) {
-        const map = L.map(fieldMapRef.current, {
-          center: OFFICER_LOCATION.pos,
+        const map = new maplibregl.Map({
+          container: fieldMapRef.current,
+          style: {
+            version: 8,
+            sources: {
+              'topo-tiles': {
+                type: 'raster',
+                tiles: [
+                  'https://a.tile.opentopomap.org/{z}/{x}/{y}.png',
+                  'https://b.tile.opentopomap.org/{z}/{x}/{y}.png',
+                  'https://c.tile.opentopomap.org/{z}/{x}/{y}.png'
+                ],
+                tileSize: 256,
+                attribution: '&copy; OpenTopoMap contributors'
+              }
+            },
+            layers: [
+              {
+                id: 'topo-layer',
+                type: 'raster',
+                source: 'topo-tiles',
+                minzoom: 0,
+                maxzoom: 17
+              }
+            ]
+          },
+          center: [OFFICER_LOCATION.pos[1], OFFICER_LOCATION.pos[0]],
           zoom: 14,
-          zoomControl: true,
+          pitch: 50,
+          bearing: 15,
           attributionControl: false
         });
 
-        L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
-          maxZoom: 19
-        }).addTo(map);
+        map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), 'top-right');
 
-        L.tileLayer('https://services.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}', {
-          maxZoom: 19
-        }).addTo(map);
+        // Officer GPS Pinpoint Marker
+        const officerEl = document.createElement('div');
+        officerEl.className = 'field-officer-marker';
+        officerEl.style.cssText = 'width: 26px; height: 26px; border-radius: 50%; background: #2563eb; border: 3px solid #ffffff; box-shadow: 0 0 14px #2563eb; display: flex; align-items: center; justify-content: center; color: white; font-size: 12px;';
+        officerEl.innerHTML = '👮';
 
-        // Officer GPS Pin
-        const officerMarker = L.circleMarker(OFFICER_LOCATION.pos, {
-          radius: 9,
-          fillColor: '#2563eb',
-          color: '#ffffff',
-          weight: 3,
-          fillOpacity: 1
-        }).addTo(map).bindPopup(`
-          <strong>${OFFICER_LOCATION.name}</strong><br/>
-          Heading: ${OFFICER_LOCATION.heading}<br/>
-          Lock: ${OFFICER_LOCATION.accuracy}
+        const officerPopup = new maplibregl.Popup({ offset: 12 }).setHTML(`
+          <div style="font-family: 'Plus Jakarta Sans', sans-serif; font-size: 0.82rem; padding: 4px;">
+            <strong style="color:#2563eb;">${OFFICER_LOCATION.name}</strong><br/>
+            Heading: ${OFFICER_LOCATION.heading}<br/>
+            Lock: ${OFFICER_LOCATION.accuracy}
+          </div>
         `);
-        officerMarkerRef.current = officerMarker;
+
+        new maplibregl.Marker({ element: officerEl })
+          .setLngLat([OFFICER_LOCATION.pos[1], OFFICER_LOCATION.pos[0]])
+          .setPopup(officerPopup)
+          .addTo(map);
 
         // Render Task Markers
         Object.values(tasks).forEach(task => {
           if (task.coords) {
             const markerColor = task.urgency === 'critical' ? '#dc2626' : (task.urgency === 'high' ? '#ea580c' : '#16a34a');
-            L.circleMarker(task.coords, {
-              radius: 7,
-              fillColor: markerColor,
-              color: '#ffffff',
-              weight: 2,
-              fillOpacity: 1
-            }).addTo(map).bindPopup(`
-              <strong>${task.title}</strong><br/>
-              Status: <span style="color:${markerColor}; font-weight:700;">${task.status.toUpperCase()}</span><br/>
-              Distance: ${task.distance}
+            const el = document.createElement('div');
+            el.className = 'field-task-marker';
+            el.style.cssText = `width: 22px; height: 22px; border-radius: 50%; background: ${markerColor}; border: 2px solid #ffffff; box-shadow: 0 0 8px ${markerColor}; display: flex; align-items: center; justify-content: center; color: white; font-size: 10px; font-weight: 800; cursor: pointer;`;
+            el.innerHTML = task.urgency === 'critical' ? '!' : '✓';
+
+            const popup = new maplibregl.Popup({ offset: 12 }).setHTML(`
+              <div style="font-family: 'Plus Jakarta Sans', sans-serif; font-size: 0.82rem; padding: 4px;">
+                <strong style="color:${markerColor};">${task.title}</strong><br/>
+                Status: <span style="color:${markerColor}; font-weight:700;">${task.status.toUpperCase()}</span><br/>
+                Distance: ${task.distance}
+              </div>
             `);
+
+            new maplibregl.Marker({ element: el })
+              .setLngLat([task.coords[1], task.coords[0]])
+              .setPopup(popup)
+              .addTo(map);
           }
         });
 
         fieldMapInstanceRef.current = map;
       } else {
         setTimeout(() => {
-          fieldMapInstanceRef.current.invalidateSize();
+          fieldMapInstanceRef.current.resize();
         }, 100);
       }
     }
@@ -269,16 +301,16 @@ export default function FieldPortal() {
     if (!fieldMapInstanceRef.current) return;
 
     if (targetVal === 'my-location') {
-      fieldMapInstanceRef.current.setView(OFFICER_LOCATION.pos, 15);
+      fieldMapInstanceRef.current.flyTo({ center: [OFFICER_LOCATION.pos[1], OFFICER_LOCATION.pos[0]], zoom: 15, pitch: 50, essential: true });
       showFieldToast('Centered on Officer GPS Location');
     } else if (targetVal === 'gw-04') {
-      fieldMapInstanceRef.current.setView([25.5830, 91.8900], 16);
+      fieldMapInstanceRef.current.flyTo({ center: [91.8900, 25.5830], zoom: 16, pitch: 55, essential: true });
       showFieldToast('Focused on Gateway GW-SH01');
     } else if (targetVal === 'report-904') {
-      fieldMapInstanceRef.current.setView([25.5750, 91.8900], 16);
+      fieldMapInstanceRef.current.flyTo({ center: [91.8900, 25.5750], zoom: 16, pitch: 55, essential: true });
       showFieldToast('Focused on Citizen Report #904');
     } else {
-      fieldMapInstanceRef.current.setView(OFFICER_LOCATION.pos, 14);
+      fieldMapInstanceRef.current.flyTo({ center: [OFFICER_LOCATION.pos[1], OFFICER_LOCATION.pos[0]], zoom: 14, pitch: 45, essential: true });
     }
   };
 

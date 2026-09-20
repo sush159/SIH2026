@@ -23,7 +23,7 @@ export const TRANSLATIONS = {
     navigateShelter: "Route",
     telemetryRainfall: "Rainfall Intensity",
     telemetrySoil: "Soil Saturation",
-    telemetrySlope: "Ground Deformation",
+    telemetrySlope: "Slope Stability",
     savedRoutesHeader: "Saved Commute Corridor",
     viewOnMap: "View on Map →",
     homeRouteTitle: "GS Road Urban Corridor",
@@ -91,7 +91,26 @@ export const TRANSLATIONS = {
     confirmStatus: "Status:",
     confirmLocation: "Location:",
     confirmCategory: "Category:",
-    modalClose: "Close & Return"
+    modalClose: "Close & Return",
+    popupBadgeDanger: "RED ALERT",
+    popupBadgeWarning: "ORANGE WARNING",
+    popupAuthority: "District Disaster Authority",
+    popupMute: "Mute",
+    popupUnmute: "Unmute",
+    popupMuteTitle: "Mute Alarm Siren",
+    popupUnmuteTitle: "Unmute Alarm Siren",
+    popupDefaultHeadline: "HIGH LANDSLIDE EVACUATION ALERT",
+    popupDefaultDesc: "Immediate evacuation ordered due to severe slope instability. Proceed to the nearest safe shelter immediately.",
+    popupShelterTag: "DESIGNATED SHELTER",
+    popupShelterDefault: "Shillong Municipal Relief Center #1",
+    popupShelterMeta: "1.1 km • Medical Ready",
+    popupNavigateShelter: "Navigate to Shelter →",
+    popupRouteTag: "SAFE ROUTE (OPEN)",
+    popupRouteDefault: "Upper Helang Bypass",
+    popupRouteMeta: "Clear • NH-7 Blocked",
+    popupViewRoute: "View Safe Route →",
+    popupAcknowledge: "Acknowledge & Silence Siren",
+    popupAcknowledgeSub: "Silences alarm and confirms your safety with Disaster Control"
   },
   hi: {
     appTitle: "रेजिलिएंटगार्ड",
@@ -117,7 +136,7 @@ export const TRANSLATIONS = {
     navigateShelter: "मार्ग",
     telemetryRainfall: "वर्षा तीव्रता",
     telemetrySoil: "मिट्टी की नमी",
-    telemetrySlope: "भू-विस्थापन (उपग्रह)",
+    telemetrySlope: "ढलान स्थिरता",
     savedRoutesHeader: "सहेजा गया आवागमन मार्ग",
     viewOnMap: "मानचित्र पर देखें →",
     homeRouteTitle: "जीएस रोड शहरी मार्ग",
@@ -185,7 +204,26 @@ export const TRANSLATIONS = {
     confirmStatus: "स्थिति:",
     confirmLocation: "स्थान:",
     confirmCategory: "श्रेणी:",
-    modalClose: "बंद करें और वापस जाएं"
+    modalClose: "बंद करें और वापस जाएं",
+    popupBadgeDanger: "रेड अलर्ट (आपातकालीन)",
+    popupBadgeWarning: "नारंगी चेतावनी",
+    popupAuthority: "जिला आपदा प्रबंधन प्राधिकरण",
+    popupMute: "म्यूट करें",
+    popupUnmute: "आवाज चालू करें",
+    popupMuteTitle: "अलार्म सायरन म्यूट करें",
+    popupUnmuteTitle: "अलार्म सायरन चालू करें",
+    popupDefaultHeadline: "उच्च भूस्खलन निकासी चेतावनी",
+    popupDefaultDesc: "गंभीर ढलान अस्थिरता के कारण तत्काल निकासी का आदेश दिया गया है। कृपया तुरंत निकटतम सुरक्षित आश्रय की ओर बढ़ें।",
+    popupShelterTag: "निर्धारित राहत केंद्र",
+    popupShelterDefault: "शिलांग नगर राहत केंद्र #1",
+    popupShelterMeta: "1.1 किमी • चिकित्सा सहायता तैयार",
+    popupNavigateShelter: "राहत केंद्र का मार्ग देखें →",
+    popupRouteTag: "सुरक्षित मार्ग (खुला है)",
+    popupRouteDefault: "अपर हेलंग बाईपास",
+    popupRouteMeta: "मार्ग खुला • NH-7 अवरुद्ध",
+    popupViewRoute: "सुरक्षित मार्ग देखें →",
+    popupAcknowledge: "स्वीकार करें एवं सायरन बंद करें",
+    popupAcknowledgeSub: "सायरन बंद होगा और आपदा नियंत्रण कक्ष को आपकी सुरक्षा की पुष्टि भेजी जाएगी"
   }
 };
 
@@ -206,8 +244,8 @@ export const RISK_DATA = {
     soil: "38%",
     soilStat: "Normal Dry",
     soilColor: "#059669",
-    slope: "0.1 mm/h",
-    slopeStat: "No movement detected (satellite)",
+    slope: "Stable (Safe)",
+    slopeStat: "Normal Slope Condition",
     slopeColor: "#059669",
     badgeClass: "safe",
     gaugeAngle: 45
@@ -228,8 +266,8 @@ export const RISK_DATA = {
     soil: "62%",
     soilStat: "Elevated Saturation",
     soilColor: "#d97706",
-    slope: "0.8 mm/h",
-    slopeStat: "Minor displacement noted (satellite)",
+    slope: "Moderate Watch",
+    slopeStat: "Elevated Terrain Caution",
     slopeColor: "#d97706",
     badgeClass: "watch",
     gaugeAngle: 120
@@ -250,8 +288,8 @@ export const RISK_DATA = {
     soil: "78%",
     soilStat: "High Moisture",
     soilColor: "#ea580c",
-    slope: "2.1 mm/h",
-    slopeStat: "Elevated surface shift (satellite)",
+    slope: "Unstable (High)",
+    slopeStat: "Steep Terrain Warning",
     slopeColor: "#ea580c",
     badgeClass: "warning",
     gaugeAngle: 195
@@ -272,8 +310,8 @@ export const RISK_DATA = {
     soil: "89%",
     soilStat: "Critical Moisture",
     soilColor: "#dc2626",
-    slope: "4.2 mm/h",
-    slopeStat: "Active movement detected (satellite)",
+    slope: "Critical Risk",
+    slopeStat: "Immediate Landslide Threat",
     slopeColor: "#dc2626",
     badgeClass: "danger",
     gaugeAngle: 280
@@ -284,6 +322,7 @@ export const ROADS_DATA = [
   {
     id: "shillong-corridor",
     name: "GS Road Urban Corridor (Shillong)",
+    nameHi: "जीएस रोड शहरी मार्ग (शिलांग)",
     status: "Blocked",
     badgeClass: "blocked",
     transitStatus: "Closed for Transit",
@@ -302,6 +341,7 @@ export const ROADS_DATA = [
     ],
     alternateRoute: {
       name: "Shillong Peak Link Bypass",
+      nameHi: "शिलांग पीक लिंक बाईपास",
       status: "Open",
       distance: "12.4 km",
       extraTime: "+15 mins",
@@ -320,6 +360,7 @@ export const ROADS_DATA = [
   {
     id: "cherrapunji-road",
     name: "Cherrapunji (Sohra) Escarpment Road",
+    nameHi: "चेरापूंजी (सोहरा) कगार मार्ग",
     status: "Blocked",
     badgeClass: "blocked",
     transitStatus: "Critical Blockage",
@@ -336,6 +377,7 @@ export const ROADS_DATA = [
     ],
     alternateRoute: {
       name: "Nohkalikai Ridge Transit Route",
+      nameHi: "नोहकलिकाई कटक पारगमन मार्ग",
       status: "Open",
       distance: "9.8 km",
       extraTime: "+20 mins",
@@ -352,6 +394,7 @@ export const ROADS_DATA = [
   {
     id: "trans-arunachal",
     name: "Trans-Arunachal Sector (NH-13)",
+    nameHi: "ट्रांस-अरुणाचल सेक्टर (NH-13)",
     status: "At-Risk",
     badgeClass: "at-risk",
     transitStatus: "Single-Lane Escort",
@@ -368,6 +411,7 @@ export const ROADS_DATA = [
     ],
     alternateRoute: {
       name: "Valley Low Bypass Route",
+      nameHi: "घाटी निचला बाईपास मार्ग",
       status: "Open",
       distance: "18.5 km",
       extraTime: "+25 mins",
@@ -384,6 +428,7 @@ export const ROADS_DATA = [
   {
     id: "shillong-bypass",
     name: "Shillong Bypass Highway (NH-6)",
+    nameHi: "शिलांग बाईपास हाईवे (NH-6)",
     status: "Open",
     badgeClass: "open",
     transitStatus: "Open & Clear",
@@ -405,69 +450,93 @@ export const LOCATIONS_DATA = [
   {
     id: "shillong",
     name: "Shillong Urban Ridge, Meghalaya",
+    nameHi: "शिलांग कटक ढलान, मेघालय",
     title: "Shillong — Urban & Ridge Slopes",
+    titleHi: "शिलांग — शहरी एवं कटक ढलान",
     subtitle: "Meghalaya • Live Earth Engine Feeds",
+    subtitleHi: "मेघालय • लाइव अर्थ इंजन फ़ीड",
     lat: 25.5788,
     lng: 91.8933,
     risk: "danger",
     telemetry: {
       rainfall: "48 mm/h",
       rainfallStat: "Heavy Downpour",
+      rainfallColor: "#dc2626",
       soil: "89%",
       soilStat: "Critical Moisture",
-      slope: "4.2 mm/h",
-      slopeStat: "Active movement detected (satellite)"
+      soilColor: "#dc2626",
+      slope: "Critical Risk",
+      slopeStat: "Immediate Landslide Threat",
+      slopeColor: "#dc2626"
     }
   },
   {
     id: "cherrapunji",
     name: "Cherrapunji (Sohra) Escarpment, Meghalaya",
+    nameHi: "चेरापूंजी (सोहरा) कगार, मेघालय",
     title: "Cherrapunji — Sohra Escarpment & Gorges",
+    titleHi: "चेरापूंजी — सोहरा कगार एवं घाटियां",
     subtitle: "Meghalaya • High Precipitation Radar Zone",
+    subtitleHi: "मेघालय • उच्च वर्षा रडार क्षेत्र",
     lat: 25.2700,
     lng: 91.7300,
     risk: "warning",
     telemetry: {
       rainfall: "32 mm/h",
       rainfallStat: "Heavy Downpour",
+      rainfallColor: "#ea580c",
       soil: "78%",
       soilStat: "High Moisture",
-      slope: "2.1 mm/h",
-      slopeStat: "Elevated surface shift (satellite)"
+      soilColor: "#ea580c",
+      slope: "Unstable (High)",
+      slopeStat: "Steep Terrain Warning",
+      slopeColor: "#ea580c"
     }
   },
   {
     id: "arunachal",
     name: "Anjaw / Lohit Border Sector, Arunachal Pradesh",
+    nameHi: "अंजॉ / लोहित सीमावर्ती क्षेत्र, अरुणाचल प्रदेश",
     title: "Remote Mountain Slopes — Arunachal Pradesh",
+    titleHi: "पर्वतीय ढलान — अरुणाचल प्रदेश",
     subtitle: "Eastern Himalaya • InSAR Monitored Corridor",
+    subtitleHi: "पूर्वी हिमालय • इनसार निगरानी गलियारा",
     lat: 28.6500,
     lng: 96.1500,
     risk: "watch",
     telemetry: {
       rainfall: "14 mm/h",
       rainfallStat: "Moderate Drizzle",
+      rainfallColor: "#d97706",
       soil: "62%",
       soilStat: "Elevated Saturation",
-      slope: "0.8 mm/h",
-      slopeStat: "Minor displacement noted (satellite)"
+      soilColor: "#d97706",
+      slope: "Moderate Watch",
+      slopeStat: "Elevated Terrain Caution",
+      slopeColor: "#d97706"
     }
   },
   {
     id: "guwahati",
     name: "Guwahati Valley Foothills, Assam",
+    nameHi: "गुवाहाटी घाटी तलहटी, असम",
     title: "Guwahati — Valley Slopes & Lowlands",
+    titleHi: "गुवाहाटी — घाटी ढलान एवं निचला क्षेत्र",
     subtitle: "Assam • Urban Drainage & Weather Radar",
+    subtitleHi: "असम • शहरी जल निकासी एवं रडार",
     lat: 26.1445,
     lng: 91.7362,
     risk: "safe",
     telemetry: {
       rainfall: "2 mm/h",
       rainfallStat: "Normal Light",
+      rainfallColor: "#059669",
       soil: "38%",
       soilStat: "Normal Dry",
-      slope: "0.1 mm/h",
-      slopeStat: "No movement detected (satellite)"
+      soilColor: "#059669",
+      slope: "Stable (Safe)",
+      slopeStat: "Normal Slope Condition",
+      slopeColor: "#059669"
     }
   }
 ];
@@ -475,26 +544,131 @@ export const LOCATIONS_DATA = [
 export const SHELTERS_DATA = [
   {
     name: "Shillong Polo Ground Camp #1",
+    nameHi: "शिलांग पोलो ग्राउंड राहत केंद्र #1",
     lat: 25.5840,
     lng: 91.8950,
     capacity: "210 / 450 Occupied",
     supplies: "Medical Tent, Emergency Power, Clean Water",
+    suppliesHi: "मेडिकल टेंट, आपातकालीन बिजली, स्वच्छ पेयजल",
     distance: "0.8 km"
   },
   {
     name: "Mawlai Higher Secondary Relief Zone",
+    nameHi: "मावलाई उच्चतर माध्यमिक राहत क्षेत्र",
     lat: 25.5890,
     lng: 91.8790,
     capacity: "85 / 300 Occupied",
     supplies: "SDRF First Aid, Wireless Ham Radio",
+    suppliesHi: "एसडीआरएफ प्राथमिक चिकित्सा, वायरलेस हैम रेडियो",
     distance: "1.6 km"
   },
   {
     name: "St. Anthony Relief Safe Ground",
+    nameHi: "सेंट एंथोनी राहत सुरक्षित क्षेत्र",
     lat: 25.5690,
     lng: 91.8980,
     capacity: "140 / 500 Occupied",
     supplies: "Community Kitchen, Satellite Comm Hub",
+    suppliesHi: "सामुदायिक रसोई, सैटेलाइट संचार केंद्र",
     distance: "2.1 km"
   }
 ];
+
+export const HEATMAP_CIRCLES = [
+  // --- SHILLONG REGION (2 Clean Demo Zones: 1 Red, 1 Orange) ---
+  {
+    id: "shillong-core-red",
+    locationId: "shillong",
+    name: "Shillong Urban Ridge Scarp",
+    severity: "critical", // RED
+    color: "#dc2626",
+    fillColor: "#ef4444",
+    center: [25.5788, 91.8933],
+    innerRadius: 650,
+    outerRadius: 1150,
+    riskScore: "94% Critical",
+    displacement: "4.8 mm/h (Satellite InSAR)",
+    saturation: "91% Extreme",
+    description: "Active slope instability, tension fissures, and high water table saturation."
+  },
+  {
+    id: "wah-umkhrah-orange",
+    locationId: "shillong",
+    name: "Wah Umkhrah Slope Flank",
+    severity: "warning", // ORANGE
+    color: "#ea580c",
+    fillColor: "#f97316",
+    center: [25.5890, 91.9050],
+    innerRadius: 550,
+    outerRadius: 1000,
+    riskScore: "74% Warning",
+    displacement: "2.1 mm/h (Moderate Shift)",
+    saturation: "82% Elevated",
+    description: "Saturated stream embankment with elevated runoff accumulation."
+  },
+
+  // --- CHERRAPUNJI REGION (2 Clean Demo Zones) ---
+  {
+    id: "cherra-escarpment-red",
+    locationId: "cherrapunji",
+    name: "Sohra Canyon Escarpment",
+    severity: "critical", // RED
+    color: "#dc2626",
+    fillColor: "#ef4444",
+    center: [25.2700, 91.7300],
+    innerRadius: 850,
+    outerRadius: 1400,
+    riskScore: "96% Critical",
+    displacement: "6.1 mm/h (Torrential InSAR)",
+    saturation: "95% Extreme",
+    description: "Massive escarpment debris chute and torrential sheetwash."
+  },
+  {
+    id: "nohkalikai-orange",
+    locationId: "cherrapunji",
+    name: "Nohkalikai Drainage Gully",
+    severity: "warning", // ORANGE
+    color: "#ea580c",
+    fillColor: "#f97316",
+    center: [25.2780, 91.7180],
+    innerRadius: 650,
+    outerRadius: 1100,
+    riskScore: "72% Warning",
+    displacement: "2.4 mm/h",
+    saturation: "84% High",
+    description: "High velocity waterfall spray and weathered limestone slippage."
+  },
+
+  // --- ARUNACHAL REGION (2 Clean Demo Zones) ---
+  {
+    id: "anjaw-core-red",
+    locationId: "arunachal",
+    name: "Lohit Valley Mountain Scarp",
+    severity: "critical", // RED
+    color: "#dc2626",
+    fillColor: "#ef4444",
+    center: [28.6500, 96.1500],
+    innerRadius: 900,
+    outerRadius: 1500,
+    riskScore: "91% Critical",
+    displacement: "5.4 mm/h (Seismic Shift)",
+    saturation: "88% High",
+    description: "Unstable tectonic fault zone with recurring boulder rockfalls."
+  },
+  {
+    id: "anjaw-flank-orange",
+    locationId: "arunachal",
+    name: "Trans-Arunachal Highway Cut",
+    severity: "warning", // ORANGE
+    color: "#ea580c",
+    fillColor: "#f97316",
+    center: [28.6420, 96.1420],
+    innerRadius: 700,
+    outerRadius: 1200,
+    riskScore: "68% Warning",
+    displacement: "1.9 mm/h",
+    saturation: "79% Elevated",
+    description: "Roadcut hillside face with minor loose shale debris."
+  }
+];
+

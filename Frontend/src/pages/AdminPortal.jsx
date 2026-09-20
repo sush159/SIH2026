@@ -1,50 +1,48 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
-import L from 'leaflet';
+import * as maplibregl from 'maplibre-gl';
+import 'maplibre-gl/dist/maplibre-gl.css';
 import '../styles/admin.css';
 import {
   ZONES_DATABASE,
   INITIAL_CITIZEN_REPORTS,
   INITIAL_DISPATCHED_ALERTS,
-  INITIAL_REJECTED_ALERTS,
   INITIAL_CITIZEN_EVACUATION_TRACKING
 } from '../utils/adminData';
 import { connectArduino, sendToArduino } from '../utils/arduinoSerial';
 
-
 export default function AdminPortal() {
-  const [activePage, setActivePage] = useState('page1'); // 'page1', 'page2', 'page3', 'page4'
+  const [activePage, setActivePage] = useState('page1'); // 'page1': Overview, 'page2': Zone Details, 'page4': Citizen Reports, 'page3': Alerts & History
   const [selectedZoneKey, setSelectedZoneKey] = useState('shillong-meghalaya');
   const [citizenReports, setCitizenReports] = useState(INITIAL_CITIZEN_REPORTS);
   const [dispatchedAlerts, setDispatchedAlerts] = useState(INITIAL_DISPATCHED_ALERTS);
-  const [rejectedAlerts, setRejectedAlerts] = useState(INITIAL_REJECTED_ALERTS);
+  const [citizenEvacuations, setCitizenEvacuations] = useState(INITIAL_CITIZEN_EVACUATION_TRACKING);
+  const [selectedCaseModal, setSelectedCaseModal] = useState(null);
+  const [selectedHardwareModal, setSelectedHardwareModal] = useState(null);
+  const [selectedZoneModal, setSelectedZoneModal] = useState(null);
+  const [selectedRoadModal, setSelectedRoadModal] = useState(null);
+  
+  // Filters & Search
   const [reportFilter, setReportFilter] = useState('all');
   const [reportSearch, setReportSearch] = useState('');
   const [historySearch, setHistorySearch] = useState('');
-  const [historyZoneFilter, setHistoryZoneFilter] = useState('all');
+  const [evacFilter, setEvacFilter] = useState('all'); // 'all' | 'not_turned_off' | 'turned_off' | 'dispatched'
+  const [evacSearch, setEvacSearch] = useState('');
+  const [hardwareFilter, setHardwareFilter] = useState('all');
+  const [hardwareSearch, setHardwareSearch] = useState('');
 
-  // Modals state
-  const [showSatModal, setShowSatModal] = useState(false);
-  const [satModalMode, setSatModalMode] = useState('sentinel-1'); // 'sentinel-1', 'sentinel-2', 'compare'
-  const [satComparePos, setSatComparePos] = useState(50);
+  // Modals & UI States
   const [showConfirmModal, setShowConfirmModal] = useState(false);
-  const [showStatModal, setShowStatModal] = useState(false);
-  const [statModalType, setStatModalType] = useState('danger-zones');
-  const [showCitizenModal, setShowCitizenModal] = useState(false);
-  const [selectedCitizenReport, setSelectedCitizenReport] = useState(null);
-  const [showPeopleModal, setShowPeopleModal] = useState(false);
-
-  // Status & Time state
   const [toastMessage, setToastMessage] = useState('');
   const [showToast, setShowToast] = useState(false);
   const [arduinoConnected, setArduinoConnected] = useState(false);
   const [clockTime, setClockTime] = useState('');
 
+  // Map Refs
   const overviewMapRef = useRef(null);
   const overviewMapInstanceRef = useRef(null);
   const zoneMapRef = useRef(null);
   const zoneMapInstanceRef = useRef(null);
-  const zoneLayersRef = useRef({});
 
   const zoneData = ZONES_DATABASE[selectedZoneKey] || ZONES_DATABASE['shillong-meghalaya'];
 
@@ -56,7 +54,7 @@ export default function AdminPortal() {
     }, 4000);
   };
 
-  // Clock
+  // Clock Live Update
   useEffect(() => {
     const updateTime = () => {
       const now = new Date();
@@ -67,284 +65,86 @@ export default function AdminPortal() {
     return () => clearInterval(interval);
   }, []);
 
-  const [citizenEvacuations, setCitizenEvacuations] = useState(INITIAL_CITIZEN_EVACUATION_TRACKING);
+  // Real-time listener for Citizen alarm silence / acknowledgement responses
+  useEffect(() => {
+    const handleStorageChange = (e) => {
+      if (e.key === 'resilientguard_citizen_response' && e.newValue) {
+        try {
+          const payload = JSON.parse(e.newValue);
+          setCitizenEvacuations(prev => {
+            const exists = prev.some(c => c.id === payload.citizenId);
+            if (exists) {
+              return prev.map(c => {
+                if (c.id === payload.citizenId) {
+                  return {
+                    ...c,
+                    alarmStatus: payload.status === 'unresponsive' ? 'not_turned_off' : 'turned_off',
+                    status: payload.status,
+                    actionText: payload.actionText || 'Alarm Turned Off (Silenced)',
+                    ringingDuration: 'Silenced Live',
+                    lastUpdate: 'Just now',
+                    shelterTarget: payload.shelterTarget || c.shelterTarget
+                  };
+                }
+                return c;
+              });
+            } else {
+              return [
+                {
+                  id: payload.citizenId || `CIT-LIVE-${Date.now().toString().slice(-4)}`,
+                  name: payload.name || 'Resident App User (Live)',
+                  phone: payload.phone || '+91 98765-LIVE-APP',
+                  zone: payload.zone || 'Shillong Urban Ridge',
+                  location: payload.location || 'Urban Sector',
+                  alarmStatus: payload.status === 'unresponsive' ? 'not_turned_off' : 'turned_off',
+                  status: payload.status || 'evacuating',
+                  actionText: payload.actionText || 'Alarm Turned Off (Silenced)',
+                  ringingDuration: 'Silenced Live',
+                  lastUpdate: 'Just now',
+                  shelterTarget: payload.shelterTarget || 'Shillong Polo Ground Camp #1',
+                  evacRoute: 'Primary Evacuation Link',
+                  officerDispatched: false,
+                  assignedOfficer: null
+                },
+                ...prev
+              ];
+            }
+          });
+          showOperationalToast(`Citizen Response: ${payload.name} has turned off the alarm siren`);
+        } catch (err) {}
+      }
+    };
 
-  // Dispatch Physical SDRF Rescue Team for Unresponsive Citizens
+    window.addEventListener('storage', handleStorageChange);
+    return () => window.removeEventListener('storage', handleStorageChange);
+  }, []);
+
+  // Dispatch Field Officer Physical Rescue for Unresponsive Citizens
   const handleDispatchPhysicalRescue = (citizen) => {
-    const qrtName = `SDRF Rescue Unit #${Math.floor(1 + Math.random() * 5)}`;
+    const officerName = `Field Officer #${Math.floor(101 + Math.random() * 20)}`;
     setCitizenEvacuations(prev => prev.map(c => {
       if (c.id === citizen.id) {
         return {
           ...c,
-          qrtDispatched: true,
-          qrtTeam: qrtName,
+          alarmStatus: 'dispatched',
+          officerDispatched: true,
+          assignedOfficer: officerName,
           status: 'rescuing',
-          actionText: `🚨 ${qrtName} Dispatched (Physical Welfare Check En Route)`
+          actionText: `${officerName} En Route`
         };
       }
       return c;
     }));
-
-    // Broadcast urgent task to Field Portal (SDRF officers)
-    const taskPayload = {
-      type: 'SDRF_PHYSICAL_DISPATCH',
-      taskId: `RESCUE-${Math.floor(201 + Math.random() * 800)}`,
-      residentName: citizen.name,
-      location: citizen.location,
-      phone: citizen.phone,
-      zone: citizen.zone,
-      urgency: 'CRITICAL / LIFE SAFETY',
-      summary: `Non-responsive citizen after Level 4 disaster alarm. Alarm not turned off. Immediate physical welfare check and manual evacuation required to ${citizen.shelterTarget}.`,
-      shelter: citizen.shelterTarget,
-      assignedUnit: qrtName
-    };
-
-    try {
-      if (typeof BroadcastChannel !== 'undefined') {
-        const channel = new BroadcastChannel('resilientguard_admin_alerts');
-        channel.postMessage(taskPayload);
-        channel.close();
-      }
-    } catch (e) {}
-
-    try {
-      localStorage.setItem('resilientguard_field_rescue_task', JSON.stringify({ ...taskPayload, triggerTime: Date.now() }));
-    } catch (e) {}
-
-    showOperationalToast(`🚨 Physical Rescue Dispatched: ${qrtName} assigned to ${citizen.name} (${citizen.location})`);
+    showOperationalToast(`Dispatched ${officerName} for ${citizen.name} (${citizen.location})`);
   };
 
-  // Listen to cross-tab broadcast messages & Citizen Alarm Responses
-  useEffect(() => {
-    let channel;
-    const processIncomingCitizenResponse = (data) => {
-      if (!data) return;
-      if (data.type === 'CITIZEN_ALARM_RESPONSE') {
-        setCitizenEvacuations(prev => {
-          const existingIdx = prev.findIndex(c => c.id === data.citizenId || c.name === data.name);
-          if (existingIdx !== -1) {
-            const updated = [...prev];
-            updated[existingIdx] = {
-              ...updated[existingIdx],
-              status: data.status,
-              actionText: data.actionText,
-              lastUpdate: data.timestamp || 'Just now',
-              shelterTarget: data.shelterTarget || updated[existingIdx].shelterTarget
-            };
-            return updated;
-          } else {
-            const newEntry = {
-              id: data.citizenId || `CIT-LIVE-${Date.now()}`,
-              name: data.name || 'Citizen App User (Live)',
-              phone: data.phone || '+91 98765-LIVE-APP',
-              zone: data.zone || 'Shillong Urban & Ridge Slopes (Meghalaya)',
-              location: data.location || 'Monitored Danger Zone',
-              status: data.status || 'acknowledged',
-              actionText: data.actionText || '🟢 Alarm Turned Off / Evacuating',
-              lastUpdate: data.timestamp || 'Just now',
-              shelterTarget: data.shelterTarget || 'Shillong Municipal Relief Center #1',
-              qrtDispatched: false,
-              qrtTeam: null
-            };
-            return [newEntry, ...prev];
-          }
-        });
-        showOperationalToast(`🔔 Citizen Evacuation Update: ${data.name || 'Resident'} — ${data.actionText}`);
-      }
-    };
-
-    try {
-      if (typeof BroadcastChannel !== 'undefined') {
-        channel = new BroadcastChannel('resilientguard_admin_alerts');
-        channel.onmessage = (e) => {
-          const data = e.data;
-          if (!data) return;
-
-          if (data.type === 'CITIZEN_REPORT_SUBMITTED') {
-            const newRep = {
-              id: `REP-${Math.floor(100 + Math.random() * 900)}`,
-              reporter: data.reporter || 'Citizen (App)',
-              contact: data.contact || 'App Verified',
-              zoneKey: 'shillong-meghalaya',
-              zone: data.zone || 'Shillong Urban Ridge',
-              location: data.location || 'Shillong Sector',
-              coords: data.coords || [25.5788, 91.8933],
-              coordsText: data.coordsText || '25.5788° N, 91.8933° E',
-              category: data.category || 'Tension Crack',
-              tags: data.tags || ['Field Finding'],
-              severity: data.severity || 'high',
-              urgencyText: data.severity === 'critical' ? 'Critical' : 'Elevated Watch',
-              description: data.description || 'Ground observation logged via citizen portal.',
-              photo: 'Photo evidence captured',
-              timestamp: 'Just now',
-              status: 'pending',
-              statusText: 'Pending Field Check',
-              patrolOfficer: 'Unassigned',
-              patrolNotes: '',
-              dispatchedQrt: null
-            };
-            setCitizenReports(prev => [newRep, ...prev]);
-            showOperationalToast(`New Citizen Hazard Report Received: ${newRep.id}`);
-          } else if (data.type === 'FIELD_TASK_RESOLVED') {
-            showOperationalToast(`Field Task ${data.taskId} resolved as ${data.resolution.toUpperCase()}`);
-          } else if (data.type === 'CITIZEN_ALARM_RESPONSE') {
-            processIncomingCitizenResponse(data);
-          }
-        };
-      }
-    } catch (err) {
-      console.warn('Admin broadcast notice:', err);
-    }
-
-    const handleStorage = (e) => {
-      if (e.key === 'resilientguard_citizen_response' && e.newValue) {
-        try {
-          const parsed = JSON.parse(e.newValue);
-          processIncomingCitizenResponse(parsed);
-        } catch (err) {}
-      }
-    };
-    window.addEventListener('storage', handleStorage);
-
-    return () => {
-      if (channel) channel.close();
-      window.removeEventListener('storage', handleStorage);
-    };
-  }, []);
-
-  // Overview Map initialization
-  useEffect(() => {
-    if (activePage === 'page1' && overviewMapRef.current) {
-      if (!overviewMapInstanceRef.current) {
-        const map = L.map(overviewMapRef.current, {
-          center: [26.2, 92.9],
-          zoom: 7,
-          zoomControl: true,
-          attributionControl: false
-        });
-
-        L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
-          maxZoom: 19
-        }).addTo(map);
-
-        L.tileLayer('https://services.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}', {
-          maxZoom: 19
-        }).addTo(map);
-
-        // Render all zones on overview map
-        Object.keys(ZONES_DATABASE).forEach(key => {
-          const z = ZONES_DATABASE[key];
-          const color = z.severity === 'critical' ? '#dc2626' : (z.severity === 'high' ? '#ea580c' : '#d97706');
-          
-          if (z.polygon) {
-            L.polygon(z.polygon, {
-              color: color,
-              weight: 2,
-              fillColor: color,
-              fillOpacity: 0.4
-            }).addTo(map).bindPopup(`
-              <div style="font-family: 'Plus Jakarta Sans', sans-serif; font-size: 0.8rem; padding: 4px;">
-                <strong>${z.name}</strong><br/>
-                Risk Level: <strong style="color:${color};">${z.finalRisk}</strong><br/>
-                Window: ${z.riskWindow}
-              </div>
-            `);
-          }
-
-          L.circleMarker(z.center, {
-            radius: 8,
-            fillColor: color,
-            color: '#ffffff',
-            weight: 2,
-            fillOpacity: 1
-          }).addTo(map).bindPopup(`
-            <div style="font-family: 'Plus Jakarta Sans', sans-serif; font-size: 0.8rem; padding: 4px;">
-              <strong>${z.name}</strong><br/>
-              Status: <span style="color:${color}; font-weight:700;">${z.severity.toUpperCase()}</span>
-            </div>
-          `);
-        });
-
-        overviewMapInstanceRef.current = map;
-      } else {
-        setTimeout(() => {
-          overviewMapInstanceRef.current.invalidateSize();
-        }, 100);
-      }
-    }
-  }, [activePage]);
-
-  // Zone Tactical Map initialization
-  useEffect(() => {
-    if (activePage === 'page2' && zoneMapRef.current) {
-      if (!zoneMapInstanceRef.current) {
-        const map = L.map(zoneMapRef.current, {
-          center: zoneData.center,
-          zoom: zoneData.zoom || 15,
-          zoomControl: true,
-          attributionControl: false
-        });
-
-        L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
-          maxZoom: 19
-        }).addTo(map);
-
-        L.tileLayer('https://services.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}', {
-          maxZoom: 19
-        }).addTo(map);
-
-        zoneLayersRef.current.perimeter = L.layerGroup().addTo(map);
-        zoneLayersRef.current.sensors = L.layerGroup().addTo(map);
-
-        zoneMapInstanceRef.current = map;
-      }
-
-      const map = zoneMapInstanceRef.current;
-      map.setView(zoneData.center, zoneData.zoom || 15);
-
-      if (zoneLayersRef.current.perimeter) zoneLayersRef.current.perimeter.clearLayers();
-      if (zoneLayersRef.current.sensors) zoneLayersRef.current.sensors.clearLayers();
-
-      if (zoneData.polygon) {
-        const sevColor = zoneData.severity === 'critical' ? '#dc2626' : (zoneData.severity === 'high' ? '#ea580c' : '#d97706');
-        L.polygon(zoneData.polygon, {
-          color: sevColor,
-          weight: 3,
-          fillColor: sevColor,
-          fillOpacity: 0.4,
-          dashArray: '6, 6'
-        }).addTo(zoneLayersRef.current.perimeter).bindPopup(`
-          <strong>${zoneData.name}</strong><br>Risk: ${zoneData.finalRisk} (Confidence: ${zoneData.confidenceScore})
-        `);
-      }
-
-      if (zoneData.sensors) {
-        zoneData.sensors.forEach(s => {
-          L.circleMarker(s.pos, {
-            radius: 7,
-            fillColor: s.color || '#38bdf8',
-            color: '#ffffff',
-            weight: 2,
-            fillOpacity: 1
-          }).addTo(zoneLayersRef.current.sensors).bindPopup(`
-            <strong>${s.name}</strong><br>Status: ${s.val}
-          `);
-        });
-      }
-
-      setTimeout(() => {
-        map.invalidateSize();
-      }, 100);
-    }
-  }, [activePage, selectedZoneKey, zoneData]);
-
-  // Connect Arduino Web Serial
+  // Connect Arduino Serial Siren
   const handleConnectArduino = async () => {
     const success = await connectArduino(showOperationalToast);
     setArduinoConnected(success);
   };
 
-  // Disseminate alert
+  // Disseminate Emergency Alert Broadcast
   const confirmAndDispatchAlert = () => {
     const refId = `#ALERT-2026-${Math.floor(1000 + Math.random() * 9000)}`;
     const now = new Date();
@@ -362,87 +162,53 @@ export default function AdminPortal() {
       zoneName: zoneData.name,
       headline: `HIGH LANDSLIDE EVACUATION ALERT: ${zoneData.name.toUpperCase()}`,
       desc: `Critical slope instability, ground saturation, and heavy precipitation detected. District Disaster Control advises immediate evacuation to ${zoneData.shelter}.`,
-      severity: 'danger',
+      severity: zoneData.severity || 'danger',
       shelter: zoneData.shelter,
-      siren: 'eas',
-      timestamp: timeStr
+      time: timeStr
     };
 
-    // Broadcast across tabs via BroadcastChannel
-    try {
-      if (typeof BroadcastChannel !== 'undefined') {
-        const channel = new BroadcastChannel('resilientguard_admin_alerts');
-        channel.postMessage(payload);
-        channel.close();
-      }
-    } catch (err) {
-      console.warn('Broadcast error:', err);
-    }
-
-    // Secondary Cross-Tab / Window Synchronization via LocalStorage
     try {
       localStorage.setItem('resilientguard_latest_alert', JSON.stringify(payload));
-    } catch (err) {
-      console.warn('LocalStorage alert sync notice:', err);
+      window.dispatchEvent(new Event('storage'));
+    } catch (e) {
+      console.warn('LocalStorage error:', e);
     }
 
-    const newDispatch = {
+    const newDispatchedItem = {
       refId: refId,
-      zone: zoneData.name,
       time: timeStr,
-      reach: 'Laitumkhrah (99%), Police Bazar (96%), Polo (98%)',
-      channel: 'App Push + SMS + Siren',
-      delivery: '98.8%',
-      status: 'Active'
+      zone: zoneData.name,
+      zoneKey: selectedZoneKey,
+      severity: zoneData.severity === 'critical' ? 'critical' : 'high',
+      channels: 'App Push, SMS, Siren Tower, LoRa Mesh',
+      status: 'active',
+      statusText: 'Active Broadcast',
+      residentsCount: 1250,
+      shelter: zoneData.shelter
     };
 
-    setDispatchedAlerts(prev => [newDispatch, ...prev]);
+    setDispatchedAlerts(prev => [newDispatchedItem, ...prev]);
     setShowConfirmModal(false);
-    showOperationalToast(`🚨 Emergency Broadcast & Siren Dispatched for ${zoneData.name}`);
+    showOperationalToast(`Emergency Evacuation Alert broadcasted for ${zoneData.name}`);
   };
 
-  // Accept and verify zone alert
-  const acceptAndVerifyZoneAlert = () => {
-    showOperationalToast(`Zone "${zoneData.name}" verified and accepted as operational danger priority.`);
-  };
-
-  // Reject / False alarm
-  const promptRejectAlert = () => {
-    const refId = `#REJ-${Math.floor(1000 + Math.random() * 9000)}`;
-    const now = new Date();
-    const timeStr = `${String(now.getDate()).padStart(2, '0')}-Sep ${now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} IST`;
-
-    const newRej = {
-      refId: refId,
-      zone: zoneData.name,
-      time: timeStr,
-      officer: 'Officer Sushanthi / Command 104',
-      reason: 'Terrain telemetry analyzed. Risk classified as false alarm / stable ground.',
-      status: 'Archived'
-    };
-
-    setRejectedAlerts(prev => [newRej, ...prev]);
-    showOperationalToast(`Alert for "${zoneData.name}" archived to rejected log.`);
-  };
-
-  // Dispatch officer to citizen report
-  const handleDispatchQRT = (reportId) => {
+  // Citizen Report Actions
+  const handleDispatchFieldOfficer = (reportId) => {
     setCitizenReports(prev => prev.map(r => {
       if (r.id === reportId) {
         return {
           ...r,
-          status: 'verified',
-          statusText: 'QRT Patrol Dispatched',
-          patrolOfficer: 'Officer #104 (SDRF Squad 2)'
+          status: 'dispatched',
+          statusText: 'Field Officer En Route',
+          patrolOfficer: r.patrolOfficer && r.patrolOfficer !== 'Unassigned' ? r.patrolOfficer : 'Field Officer Unit 2',
+          dispatchedOfficer: 'Field Officer Unit 2'
         };
       }
       return r;
     }));
-    showOperationalToast(`Field QRT Officer #104 dispatched to report ${reportId}`);
-    setShowCitizenModal(false);
+    showOperationalToast(`Field Officer dispatched for Incident ${reportId}`);
   };
 
-  // Mark report resolved
   const handleResolveReport = (reportId) => {
     setCitizenReports(prev => prev.map(r => {
       if (r.id === reportId) {
@@ -451,13 +217,6 @@ export default function AdminPortal() {
       return r;
     }));
     showOperationalToast(`Report ${reportId} marked as resolved.`);
-    setShowCitizenModal(false);
-  };
-
-  // Open stat detail modal
-  const openStatDetailModal = (type) => {
-    setStatModalType(type);
-    setShowStatModal(true);
   };
 
   // Switch to zone details from overview list
@@ -465,9 +224,6 @@ export default function AdminPortal() {
     setSelectedZoneKey(zoneKey);
     setActivePage('page2');
   };
-
-  const [selectedHistoryAlertRef, setSelectedHistoryAlertRef] = useState(dispatchedAlerts[0]?.refId || '#ALERT-2026-9041');
-  const [historyResidentFilter, setHistoryResidentFilter] = useState('all'); // 'all', 'unresponsive', 'accepted', 'dispatched'
 
   // Filtered lists
   const filteredReports = citizenReports.filter(r => {
@@ -479,10 +235,325 @@ export default function AdminPortal() {
   const filteredHistory = dispatchedAlerts.filter(a => {
     const zoneName = (a.zone || a.zoneName || '').toLowerCase();
     const ref = (a.refId || '').toLowerCase();
-    const matchZone = historyZoneFilter === 'all' || zoneName.includes(historyZoneFilter.toLowerCase());
-    const matchSearch = historySearch === '' || ref.includes(historySearch.toLowerCase()) || zoneName.includes(historySearch.toLowerCase());
-    return matchZone && matchSearch;
+    return historySearch === '' || ref.includes(historySearch.toLowerCase()) || zoneName.includes(historySearch.toLowerCase());
   });
+
+  // Overview Map Initialization (Page 1)
+  useEffect(() => {
+    if (activePage === 'page1' && overviewMapRef.current) {
+      if (!overviewMapInstanceRef.current) {
+        const zoneFeatures = Object.keys(ZONES_DATABASE).map(key => {
+          const z = ZONES_DATABASE[key];
+          const isCritical = z.severity === 'critical';
+          return {
+            type: 'Feature',
+            properties: {
+              id: key,
+              name: z.name,
+              finalRisk: z.finalRisk,
+              color: isCritical ? '#dc2626' : (z.severity === 'high' ? '#ea580c' : '#d97706'),
+              fillOpacity: isCritical ? 0.35 : 0.25
+            },
+            geometry: {
+              type: 'Polygon',
+              coordinates: [z.polygon.map(c => [c[1], c[0]])]
+            }
+          };
+        });
+
+        const map = new maplibregl.Map({
+          container: overviewMapRef.current,
+          style: {
+            version: 8,
+            sources: {
+              'topo-tiles': {
+                type: 'raster',
+                tiles: [
+                  'https://a.tile.opentopomap.org/{z}/{x}/{y}.png',
+                  'https://b.tile.opentopomap.org/{z}/{x}/{y}.png',
+                  'https://c.tile.opentopomap.org/{z}/{x}/{y}.png'
+                ],
+                tileSize: 256,
+                attribution: '&copy; OpenTopoMap contributors'
+              },
+              'overview-zones-source': {
+                type: 'geojson',
+                data: {
+                  type: 'FeatureCollection',
+                  features: zoneFeatures
+                }
+              }
+            },
+            layers: [
+              {
+                id: 'topo-layer',
+                type: 'raster',
+                source: 'topo-tiles',
+                minzoom: 0,
+                maxzoom: 17
+              },
+              {
+                id: 'overview-zones-fill',
+                type: 'fill',
+                source: 'overview-zones-source',
+                paint: {
+                  'fill-color': ['get', 'color'],
+                  'fill-opacity': ['get', 'fillOpacity']
+                }
+              },
+              {
+                id: 'overview-zones-line',
+                type: 'line',
+                source: 'overview-zones-source',
+                paint: {
+                  'line-color': ['get', 'color'],
+                  'line-width': 3,
+                  'line-dasharray': [3, 2]
+                }
+              }
+            ]
+          },
+          center: [92.9, 26.2],
+          zoom: 7,
+          pitch: 35,
+          bearing: 5,
+          attributionControl: false
+        });
+
+        // Add Zone Pinpoint Markers
+        Object.keys(ZONES_DATABASE).forEach(key => {
+          const z = ZONES_DATABASE[key];
+          const isCritical = z.severity === 'critical';
+          const color = isCritical ? '#dc2626' : (z.severity === 'high' ? '#ea580c' : '#d97706');
+
+          const el = document.createElement('div');
+          el.className = 'admin-map-zone-marker';
+          el.style.cssText = `width: 14px; height: 14px; border-radius: 50%; background: ${color}; border: 2.5px solid #ffffff; box-shadow: 0 0 10px ${color}; cursor: pointer;`;
+          el.onclick = () => setSelectedZoneModal({ key, ...z });
+
+          const popup = new maplibregl.Popup({ offset: 12 }).setHTML(`
+            <div style="font-family: 'Plus Jakarta Sans', sans-serif; font-size: 0.82rem; padding: 4px;">
+              <strong style="color:${color};">${z.name}</strong><br/>
+              <span>Risk: <strong>${z.finalRisk}</strong></span><br/>
+              <span style="font-size:0.75rem; color:#2563eb; font-weight:700;">Click for Hazard Dossier</span>
+            </div>
+          `);
+
+          new maplibregl.Marker({ element: el })
+            .setLngLat([z.center[1], z.center[0]])
+            .setPopup(popup)
+            .addTo(map);
+        });
+
+        // Click on Overview Zone Polygons to open Danger Zone details
+        map.on('click', 'overview-zones-fill', (e) => {
+          if (e.features && e.features.length > 0) {
+            const f = e.features[0];
+            const key = Object.keys(ZONES_DATABASE).find(k => ZONES_DATABASE[k].name === f.properties.name) || 'shillong-meghalaya';
+            const z = ZONES_DATABASE[key] || ZONES_DATABASE['shillong-meghalaya'];
+            setSelectedZoneModal({ key, ...z });
+          }
+        });
+        map.on('mouseenter', 'overview-zones-fill', () => {
+          map.getCanvas().style.cursor = 'pointer';
+        });
+        map.on('mouseleave', 'overview-zones-fill', () => {
+          map.getCanvas().style.cursor = '';
+        });
+
+        overviewMapInstanceRef.current = map;
+      } else {
+        setTimeout(() => {
+          if (overviewMapInstanceRef.current) {
+            overviewMapInstanceRef.current.resize();
+          }
+        }, 100);
+      }
+    }
+  }, [activePage]);
+
+  // Tactical Zone Map Initialization (Page 2)
+  useEffect(() => {
+    if (activePage === 'page2' && zoneMapRef.current) {
+      if (!zoneMapInstanceRef.current) {
+        const polyCoords = zoneData.polygon.map(c => [c[1], c[0]]);
+        const isCrit = zoneData.severity === 'critical';
+        const sevColor = isCrit ? '#dc2626' : '#ea580c';
+
+        const tacticalRoadFeatures = (zoneData.roads || []).map((r, idx) => ({
+          type: 'Feature',
+          properties: {
+            id: `tactical-road-${idx}`,
+            name: r.name,
+            status: r.status,
+            statusText: r.statusText,
+            color: r.status === 'blocked' ? '#dc2626' : (r.status === 'restricted' ? '#ea580c' : '#16a34a')
+          },
+          geometry: {
+            type: 'LineString',
+            coordinates: (r.coords || []).map(c => [c[1], c[0]])
+          }
+        }));
+
+        const map = new maplibregl.Map({
+          container: zoneMapRef.current,
+          style: {
+            version: 8,
+            sources: {
+              'topo-tiles': {
+                type: 'raster',
+                tiles: [
+                  'https://a.tile.opentopomap.org/{z}/{x}/{y}.png',
+                  'https://b.tile.opentopomap.org/{z}/{x}/{y}.png',
+                  'https://c.tile.opentopomap.org/{z}/{x}/{y}.png'
+                ],
+                tileSize: 256,
+                attribution: '&copy; OpenTopoMap contributors'
+              },
+              'tactical-perimeter-source': {
+                type: 'geojson',
+                data: {
+                  type: 'FeatureCollection',
+                  features: [
+                    {
+                      type: 'Feature',
+                      properties: {
+                        name: zoneData.name,
+                        finalRisk: zoneData.finalRisk,
+                        color: sevColor
+                      },
+                      geometry: {
+                        type: 'Polygon',
+                        coordinates: [polyCoords]
+                      }
+                    }
+                  ]
+                }
+              },
+              'tactical-roads-source': {
+                type: 'geojson',
+                data: {
+                  type: 'FeatureCollection',
+                  features: tacticalRoadFeatures
+                }
+              }
+            },
+            layers: [
+              {
+                id: 'tactical-topo-layer',
+                type: 'raster',
+                source: 'topo-tiles',
+                minzoom: 0,
+                maxzoom: 17
+              },
+              {
+                id: 'tactical-perimeter-fill',
+                type: 'fill',
+                source: 'tactical-perimeter-source',
+                paint: {
+                  'fill-color': ['get', 'color'],
+                  'fill-opacity': 0.35
+                }
+              },
+              {
+                id: 'tactical-perimeter-line',
+                type: 'line',
+                source: 'tactical-perimeter-source',
+                paint: {
+                  'line-color': ['get', 'color'],
+                  'line-width': 3.5,
+                  'line-dasharray': [3, 2]
+                }
+              },
+              {
+                id: 'tactical-roads-line',
+                type: 'line',
+                source: 'tactical-roads-source',
+                paint: {
+                  'line-color': ['get', 'color'],
+                  'line-width': 5.5,
+                  'line-opacity': 0.92
+                }
+              }
+            ]
+          },
+          center: [zoneData.center[1], zoneData.center[0]],
+          zoom: zoneData.zoom || 14.5,
+          pitch: 55,
+          bearing: 20,
+          attributionControl: false
+        });
+
+        // Add Markers for IoT Sensors
+        (zoneData.sensors || []).forEach(s => {
+          const el = document.createElement('div');
+          el.className = 'admin-sensor-marker';
+          const sColor = s.color || '#38bdf8';
+          el.style.cssText = `width: 22px; height: 22px; border-radius: 50%; background: ${sColor}; border: 2px solid #ffffff; box-shadow: 0 0 10px ${sColor}; cursor: pointer; display: flex; align-items: center; justify-content: center; color: white; font-weight: 800; font-size: 10px;`;
+          el.innerHTML = s.type === 'tilt' ? 'T' : (s.type === 'rain' ? 'R' : (s.type === 'soil' ? 'S' : 'G'));
+
+          const popup = new maplibregl.Popup({ offset: 12 }).setHTML(`
+            <div style="font-family: 'Plus Jakarta Sans', sans-serif; font-size: 0.8rem; padding: 4px;">
+              <strong style="color:${sColor};">${s.name}</strong><br/>
+              <span>Telemetry: ${s.val}</span>
+            </div>
+          `);
+
+          new maplibregl.Marker({ element: el })
+            .setLngLat([s.pos[1], s.pos[0]])
+            .setPopup(popup)
+            .addTo(map);
+        });
+
+        // Click on Road Corridors to open Road Blockade & Bypass Dossier
+        map.on('click', 'tactical-roads-line', (e) => {
+          if (e.features && e.features.length > 0) {
+            const roadId = e.features[0].properties.id;
+            const roadIdx = parseInt(String(roadId).replace('tactical-road-', ''), 10);
+            const r = (zoneData.roads || [])[roadIdx] || (zoneData.roads || [])[0];
+            if (r) setSelectedRoadModal(r);
+          }
+        });
+        map.on('mouseenter', 'tactical-roads-line', () => {
+          map.getCanvas().style.cursor = 'pointer';
+        });
+        map.on('mouseleave', 'tactical-roads-line', () => {
+          map.getCanvas().style.cursor = '';
+        });
+
+        // Click on Hazard Perimeter to open Danger Zone Dossier
+        map.on('click', 'tactical-perimeter-fill', () => {
+          setSelectedZoneModal({ key: selectedZoneKey, ...zoneData });
+        });
+
+        zoneMapInstanceRef.current = map;
+      } else {
+        const perimSource = zoneMapInstanceRef.current.getSource('tactical-perimeter-source');
+        if (perimSource) {
+          const polyCoords = zoneData.polygon.map(c => [c[1], c[0]]);
+          const isCrit = zoneData.severity === 'critical';
+          perimSource.setData({
+            type: 'FeatureCollection',
+            features: [{
+              type: 'Feature',
+              properties: { name: zoneData.name, finalRisk: zoneData.finalRisk, color: isCrit ? '#dc2626' : '#ea580c' },
+              geometry: { type: 'Polygon', coordinates: [polyCoords] }
+            }]
+          });
+        }
+
+        setTimeout(() => {
+          zoneMapInstanceRef.current.resize();
+          zoneMapInstanceRef.current.flyTo({
+            center: [zoneData.center[1], zoneData.center[0]],
+            zoom: zoneData.zoom || 14.5,
+            pitch: 55,
+            bearing: 20
+          });
+        }, 100);
+      }
+    }
+  }, [activePage, selectedZoneKey, zoneData]);
 
   return (
     <div className="admin-body">
@@ -490,20 +561,19 @@ export default function AdminPortal() {
       <header className="admin-header">
         <div className="admin-brand-wrap">
           <div className="admin-shield-icon">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
               <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
             </svg>
           </div>
           <span className="brand-title">ResilientGuard</span>
-          <span className="admin-badge-role">NER Landslide Command</span>
+          <span className="admin-badge-role">Operations Command</span>
         </div>
 
-        {/* Central Page Switcher Navigation */}
+        {/* Central Page Navigation Tabs */}
         <nav className="header-page-nav">
           <button
             type="button"
             className={`nav-page-btn ${activePage === 'page1' ? 'active' : ''}`}
-            id="navBtnPage1"
             onClick={() => setActivePage('page1')}
           >
             Overview
@@ -511,1494 +581,1599 @@ export default function AdminPortal() {
           <button
             type="button"
             className={`nav-page-btn ${activePage === 'page2' ? 'active' : ''}`}
-            id="navBtnPage2"
             onClick={() => setActivePage('page2')}
           >
-            Zone Details
+            Sector Details
           </button>
           <button
             type="button"
             className={`nav-page-btn ${activePage === 'page4' ? 'active' : ''}`}
-            id="navBtnPage4"
             onClick={() => setActivePage('page4')}
           >
             Citizen Reports
-            <span className="nav-tab-badge" id="citizenReportsNavBadge">
+            <span className="nav-tab-badge">
               {citizenReports.filter(r => r.status === 'pending').length}
             </span>
           </button>
           <button
             type="button"
             className={`nav-page-btn ${activePage === 'page3' ? 'active' : ''}`}
-            id="navBtnPage3"
             onClick={() => setActivePage('page3')}
           >
-            Alerts &amp; History
+            Alerts &amp; Evacuation
           </button>
         </nav>
 
-        {/* Header Actions & Meta */}
+        {/* Header Actions */}
         <div className="admin-header-actions">
-          <div className="admin-live-pulse-badge">
-            <span className="pulse-dot"></span>
-            <span>Mesh Online</span>
-          </div>
-
-          <div className="admin-clock" id="adminLiveClock">{clockTime || 'IST Live'}</div>
-
-          <Link
-            to="/login"
-            className="btn-portal-link"
-            title="Sign out / Switch Role"
-            style={{ color: 'var(--status-critical-text)' }}
+          <button
+            type="button"
+            className={`btn-arduino-link ${arduinoConnected ? 'connected' : ''}`}
+            onClick={handleConnectArduino}
+            title={arduinoConnected ? 'Hardware Siren Interface Connected' : 'Connect Hardware Siren over USB Serial'}
           >
+            <span className="pulse-dot"></span>
+            {arduinoConnected ? 'Siren Synced' : 'Sync Hardware Siren'}
+          </button>
+
+          <div className="admin-clock">{clockTime || 'IST Live'}</div>
+
+          <Link to="/login" className="btn-portal-link" style={{ color: 'var(--color-critical)' }}>
             Logout
           </Link>
         </div>
       </header>
 
       {/* =====================================================================
-           PAGE 1 — OVERVIEW
+           PAGE 1: OVERVIEW DASHBOARD
            ===================================================================== */}
-      <main className={`admin-page-view ${activePage === 'page1' ? 'active' : ''}`} id="viewPage1Overview">
-        <div className="page-content-wrapper">
-
-          {/* Top Row: Quick Stats (5 Interactive Metric Cards) */}
-          <section className="overview-stats-row">
-
-            <div
-              className="stat-metric-card critical clickable"
-              onClick={() => openStatDetailModal('danger-zones')}
-              title="View danger zones breakdown"
-            >
-              <div className="stat-label-row">
-                <span>Danger Zones</span>
-                <span className="status-pill critical">1 Critical</span>
-              </div>
-              <div className="stat-value" id="statDangerZonesCount">3 Active</div>
-              <div className="stat-subtext">1 Critical • 1 High • 1 Moderate</div>
-            </div>
-
-            <div
-              className="stat-metric-card warning clickable"
-              onClick={() => openStatDetailModal('villages')}
-              title="View at-risk settlements"
-            >
-              <div className="stat-label-row">
-                <span>At-Risk Settlements</span>
-                <span className="status-pill high">High Scope</span>
-              </div>
-              <div className="stat-value" id="statVillagesCount">4 Sectors</div>
-              <div className="stat-subtext">Shillong Ridge, Mawlai, Sohra, Walong</div>
-            </div>
-
-            <div
-              className="stat-metric-card info clickable"
-              onClick={() => openStatDetailModal('roads')}
-              title="View road corridors"
-            >
-              <div className="stat-label-row">
-                <span>Road Blockades</span>
-                <span className="status-pill blocked">1 Blocked</span>
-              </div>
-              <div className="stat-value">1 Corridor</div>
-              <div className="stat-subtext">GS Road Corridor (Shillong Bypass Active)</div>
-            </div>
-
-            <div
-              className="stat-metric-card hardware clickable"
-              onClick={() => openStatDetailModal('hardware')}
-              title="View hardware status"
-            >
-              <div className="stat-label-row">
-                <span>Offline Gateways</span>
-                <span className="status-pill critical">Silent Spike</span>
-              </div>
-              <div className="stat-value" style={{ color: '#be123c' }}>1 Node</div>
-              <div className="stat-subtext">GW-SH01 (Shillong post-tilt silence)</div>
-            </div>
-
-            <div
-              className="stat-metric-card citizen clickable"
-              onClick={() => setActivePage('page4')}
-              title="View citizen reports feed"
-            >
-              <div className="stat-label-row">
-                <span>Citizen Reports</span>
-                <span className="status-pill high" id="statCitizenPendingBadge">
-                  {citizenReports.filter(r => r.status === 'pending').length} Pending
-                </span>
-              </div>
-              <div className="stat-value" style={{ color: '#2563eb' }} id="statCitizenReportsCount">
-                {citizenReports.length} Filed
-              </div>
-              <div className="stat-subtext">
-                {citizenReports.filter(r => r.status === 'verified').length} Verified • {citizenReports.filter(r => r.status === 'pending').length} Pending <span className="stat-tap-hint">View feed →</span>
-              </div>
-            </div>
-
-          </section>
-
-          {/* Hardware Health Bar */}
-          <div
-            className="hardware-health-bar clickable"
-            onClick={() => openStatDetailModal('hardware')}
-            title="Open hardware telemetry"
-          >
-            <span><strong>Telemetry:</strong> 1 Gateway offline (GW-04), 7 online • 24 sensors active</span>
-            <span style={{ color: 'var(--color-accent)', fontWeight: 700, textDecoration: 'underline' }}>Hardware Status →</span>
-          </div>
-
-          {/* Main Layout: Live Heatmap + Danger Zones List */}
-          <section className="overview-main-grid">
-
-            {/* Live Risk Heatmap */}
-            <div className="heatmap-panel-wrapper">
-              <div id="leafletOverviewMap" ref={overviewMapRef}></div>
-              <div className="heatmap-legend-badge">
-                <span><strong style={{ color: '#dc2626' }}>■</strong> Critical (&gt;85%)</span>
-                <span><strong style={{ color: '#ea580c' }}>■</strong> High (65-85%)</span>
-                <span><strong style={{ color: '#d97706' }}>■</strong> Moderate (40-65%)</span>
-                <span><strong style={{ color: '#16a34a' }}>■</strong> Low (&lt;40%)</span>
-              </div>
-            </div>
-
-            {/* Danger Zones List Panel */}
-            <div className="danger-zones-panel">
-              <div className="panel-section-title">
-                <span>Active Danger Zones (NER Feeds)</span>
-              </div>
-
-              {/* Zone 1: Shillong */}
+      {activePage === 'page1' && (
+        <main className="admin-page-view active">
+          <div className="page-content-wrapper">
+            
+            {/* Quick KPI Stat Row */}
+            <section className="overview-stats-row">
               <div
-                className={`zone-list-card ${selectedZoneKey === 'shillong-meghalaya' ? 'active-selected' : ''}`}
-                onClick={() => openZoneDetails('shillong-meghalaya')}
+                className="stat-metric-card critical clickable"
+                onClick={() => setSelectedZoneModal({ key: selectedZoneKey, ...zoneData })}
+                style={{ cursor: 'pointer' }}
+                title="Click to view Danger Zone Hazard Dossier"
               >
-                <div className="zone-card-top">
-                  <span className="zone-name-title">Shillong Urban &amp; Ridge Slopes</span>
-                  <span className="status-pill critical">CRITICAL</span>
+                <div className="stat-label-row">
+                  <span>Danger Zones</span>
+                  <span className="status-pill critical">1 Critical</span>
                 </div>
-                <div className="zone-card-metrics">
-                  <span>Risk Score: <strong style={{ color: 'var(--color-critical)' }}>94.6%</strong></span>
-                  <span>Window: <strong>~45 min</strong></span>
+                <div className="stat-value">3 Active</div>
+                <div className="stat-subtext">
+                  <span style={{ color: '#dc2626', fontWeight: 700 }}>Inspect Danger Zones →</span>
                 </div>
-                <div className="zone-card-cta">Inspect Earth Engine &amp; GIS →</div>
               </div>
 
-              {/* Zone 2: Cherrapunji */}
               <div
-                className={`zone-list-card ${selectedZoneKey === 'cherrapunji-meghalaya' ? 'active-selected' : ''}`}
-                onClick={() => openZoneDetails('cherrapunji-meghalaya')}
+                className="stat-metric-card warning clickable"
+                onClick={() => {
+                  const blockedRoad = (zoneData.roads || []).find(r => r.status === 'blocked') || (zoneData.roads || [])[0];
+                  setSelectedRoadModal(blockedRoad);
+                }}
+                style={{ cursor: 'pointer' }}
+                title="Click to view Blocked Road & Bypass Dossier"
               >
-                <div className="zone-card-top">
-                  <span className="zone-name-title">Cherrapunji (Sohra) Escarpment</span>
-                  <span className="status-pill critical">CRITICAL</span>
+                <div className="stat-label-row">
+                  <span>Road Blockades</span>
+                  <span className="status-pill high">1 Blocked</span>
                 </div>
-                <div className="zone-card-metrics">
-                  <span>Risk Score: <strong style={{ color: 'var(--color-critical)' }}>98.0%</strong></span>
-                  <span>Window: <strong>~30 min</strong></span>
-                </div>
-                <div className="zone-card-cta">Inspect Earth Engine &amp; GIS →</div>
-              </div>
-
-              {/* Zone 3: Remote Arunachal */}
-              <div
-                className={`zone-list-card ${selectedZoneKey === 'remote-arunachal' ? 'active-selected' : ''}`}
-                onClick={() => openZoneDetails('remote-arunachal')}
-              >
-                <div className="zone-card-top">
-                  <span className="zone-name-title">Remote Slopes, Arunachal Pradesh</span>
-                  <span className="status-pill high">HIGH</span>
-                </div>
-                <div className="zone-card-metrics">
-                  <span>Risk Score: <strong style={{ color: 'var(--color-high)' }}>72.4%</strong></span>
-                  <span>Window: <strong>~4 hrs</strong></span>
-                </div>
-                <div className="zone-card-cta">Inspect Earth Engine &amp; GIS →</div>
-              </div>
-
-            </div>
-
-          </section>
-
-        </div>
-      </main>
-
-      {/* =====================================================================
-           PAGE 2 — DANGER ZONE DETAILS
-           ===================================================================== */}
-      <main className={`admin-page-view ${activePage === 'page2' ? 'active' : ''}`} id="viewPage2Details">
-        <div className="page-content-wrapper zone-details-container">
-
-          {/* Top Zone Selection Ribbon */}
-          <div className="zone-selector-ribbon">
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
-              <span style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-secondary)' }}>Target Zone:</span>
-              <select
-                className="zone-select-dropdown"
-                id="zoneDetailSelect"
-                value={selectedZoneKey}
-                onChange={(e) => setSelectedZoneKey(e.target.value)}
-              >
-                <option value="shillong-meghalaya">Shillong Urban &amp; Ridge (Critical • 94.6%)</option>
-                <option value="cherrapunji-meghalaya">Cherrapunji (Sohra) Escarpment (Critical • 98.0%)</option>
-                <option value="remote-arunachal">Remote Slopes, Arunachal Pradesh (High • 72.4%)</option>
-              </select>
-            </div>
-            <button type="button" className="btn-portal-link" onClick={() => setActivePage('page1')}>
-              ← Overview
-            </button>
-          </div>
-
-          {/* Top Primary Zone Command Actions Bar */}
-          <div className="zone-top-action-bar">
-            <div className="zone-action-group-left">
-              <button
-                type="button"
-                className="btn-zone-dispatch-primary"
-                onClick={() => setShowConfirmModal(true)}
-                title="Transmit Emergency Evacuation Alert to Citizens"
-              >
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
-                  <path d="M4.93 4.93a10 10 0 0 1 14.14 0" />
-                  <path d="M7.76 7.76a6 6 0 0 1 8.48 0" />
-                  <line x1="12" y1="2" x2="12" y2="4" />
-                  <line x1="12" y1="20" x2="12" y2="22" />
-                  <line x1="2" y1="12" x2="4" y2="12" />
-                  <line x1="20" y1="12" x2="22" y2="12" />
-                </svg>
-                <span>Send Alert Broadcast</span>
-              </button>
-              <button
-                type="button"
-                className="btn-zone-accept"
-                onClick={acceptAndVerifyZoneAlert}
-                title="Verify and Accept Hazard Level"
-              >
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
-                  <polyline points="20 6 9 17 4 12" />
-                </svg>
-                <span>Accept &amp; Verify</span>
-              </button>
-              <button
-                type="button"
-                className="btn-zone-reject"
-                onClick={promptRejectAlert}
-                title="Mark as False Alarm or Archive"
-              >
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
-                  <line x1="18" y1="6" x2="6" y2="18" />
-                  <line x1="6" y1="6" x2="18" y2="6" />
-                </svg>
-                <span>Reject / False Alarm</span>
-              </button>
-            </div>
-            <div className="zone-action-group-right">
-              <button
-                type="button"
-                className="btn-sat-trigger"
-                onClick={() => setShowSatModal(true)}
-                title="Inspect Satellite Sentinel-1, Sentinel-2 &amp; Before/After"
-              >
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
-                  <circle cx="12" cy="12" r="2" />
-                  <path d="M4.93 4.93a10 10 0 0 1 14.14 0" />
-                  <path d="M7.76 7.76a6 6 0 0 1 8.48 0" />
-                  <line x1="12" y1="2" x2="12" y2="4" />
-                  <line x1="12" y1="20" x2="12" y2="22" />
-                  <line x1="2" y1="12" x2="4" y2="12" />
-                  <line x1="20" y1="12" x2="22" y2="12" />
-                </svg>
-                <span>Satellite ML Feeds</span>
-              </button>
-              <button
-                type="button"
-                className="btn-action-secondary"
-                onClick={() => window.print()}
-                title="Export PDF Dossier"
-              >
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                  <polyline points="14 2 14 8 20 8" />
-                </svg>
-                <span>Export PDF</span>
-              </button>
-            </div>
-          </div>
-
-          {/* Header Section: Zone Name, Severity, Risk + Confidence, Risk Window */}
-          <section className="zone-detail-header-card">
-            <div className="zone-header-top-row">
-              <div className="zone-header-title-col">
-                <h2 id="detailZoneName">{zoneData.name}</h2>
-                <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', fontFamily: 'var(--font-main)', marginTop: '2px' }}>
-                  <span id="detailZoneCoords">{zoneData.coords}</span>
+                <div className="stat-value">GS Road</div>
+                <div className="stat-subtext">
+                  <span style={{ color: '#ea580c', fontWeight: 700 }}>Inspect Blockade &amp; Bypass →</span>
                 </div>
               </div>
-              <div id="detailSeverityBadgeContainer">
-                <span className="status-pill critical" style={{ fontSize: '0.85rem', padding: '4px 10px' }}>
-                  {zoneData.severityText || 'CRITICAL EVACUATION'}
-                </span>
-              </div>
-            </div>
 
-            <div className="zone-header-metrics-row">
-              <div className="metric-pair-col">
-                <span className="metric-pair-label">Risk &amp; Confidence</span>
-                <div className="metric-pair-value" id="detailRiskAndConfidence">
-                  <span style={{ color: 'var(--color-critical)' }}>{zoneData.finalRisk}</span> <span style={{ fontSize: '0.9rem', fontWeight: 600, color: 'var(--text-muted)' }}>(Conf: {zoneData.confidenceScore})</span>
+              <div className="stat-metric-card info">
+                <div className="stat-label-row">
+                  <span>Citizen Distress Reports</span>
+                  <span className="status-pill critical">
+                    {citizenReports.filter(r => r.status === 'pending').length} Pending
+                  </span>
+                </div>
+                <div className="stat-value">{citizenReports.length} Total</div>
+                <div className="stat-subtext">
+                  <span style={{ cursor: 'pointer', color: '#2563eb', fontWeight: 700 }} onClick={() => setActivePage('page4')}>
+                    Review Triage Feed →
+                  </span>
                 </div>
               </div>
-              <div className="metric-pair-col">
-                <span className="metric-pair-label">Risk Window</span>
-                <div className="metric-pair-value" id="detailRiskWindow" style={{ color: 'var(--color-high)' }}>{zoneData.riskWindow}</div>
-              </div>
-              <div className="metric-pair-col">
-                <span className="metric-pair-label">Relief Shelter</span>
-                <div className="metric-pair-value" id="detailReliefShelter">{zoneData.shelter}</div>
-              </div>
-            </div>
-          </section>
 
-          {/* Active Threat & Telemetry Indicators */}
-          {zoneData.flags && (
-            <section className="threat-indicators-grid" id="detailFlagsContainer">
-              {/* Downstream Surge */}
-              {zoneData.flags.cascadingFlood?.active && (
-                <div className="threat-indicator-card surge-card" id="flagCascadingFlood">
-                  <div className="threat-card-header">
-                    <span className="threat-card-title">Downstream Flash Surge</span>
-                    <span className="status-pill critical" id="surgeStatusBadge">{zoneData.flags.cascadingFlood.badge}</span>
-                  </div>
-                  <div className="threat-card-details">
-                    <div className="threat-detail-row">
-                      <span className="detail-label">Trigger:</span>
-                      <span className="detail-val" id="surgeTriggerVal">{zoneData.flags.cascadingFlood.trigger}</span>
-                    </div>
-                    <div className="threat-detail-row">
-                      <span className="detail-label">Arrival:</span>
-                      <span className="detail-val" id="surgeArrivalVal">{zoneData.flags.cascadingFlood.arrival}</span>
-                    </div>
-                    <div className="threat-detail-row">
-                      <span className="detail-label">Action:</span>
-                      <span className="detail-val" id="surgeActionVal" style={{ color: '#991b1b', fontWeight: 700 }}>
-                        {zoneData.flags.cascadingFlood.action}
-                      </span>
-                    </div>
-                  </div>
+              <div className="stat-metric-card hardware">
+                <div className="stat-label-row">
+                  <span>IoT Mesh Nodes</span>
+                  <span className="status-pill low">23/24 Live</span>
                 </div>
-              )}
-
-              {/* Hardware Status */}
-              {zoneData.flags.dataSilence?.active && (
-                <div className="threat-indicator-card hardware-card" id="flagDataSilence">
-                  <div className="threat-card-header">
-                    <span className="threat-card-title">Hardware Status</span>
-                    <span className="status-pill critical" id="hardwareStatusBadge">{zoneData.flags.dataSilence.badge}</span>
-                  </div>
-                  <div className="threat-card-details">
-                    <div className="threat-detail-row">
-                      <span className="detail-label">Station:</span>
-                      <span className="detail-val" id="hardwareStationVal">{zoneData.flags.dataSilence.station}</span>
-                    </div>
-                    <div className="threat-detail-row">
-                      <span className="detail-label">Last Signal:</span>
-                      <span className="detail-val" id="hardwareLastTxVal">{zoneData.flags.dataSilence.lastTx}</span>
-                    </div>
-                    <div className="threat-detail-row">
-                      <span className="detail-label">Action:</span>
-                      <span className="detail-val" id="hardwareActionVal" style={{ color: '#be123c', fontWeight: 700 }}>
-                        {zoneData.flags.dataSilence.action}
-                      </span>
-                    </div>
-                  </div>
+                <div className="stat-value" style={{ color: '#16a34a' }}>96% Online</div>
+                <div className="stat-subtext">
+                  <span style={{ cursor: 'pointer', color: '#2563eb', fontWeight: 700 }} onClick={() => setActivePage('page2')}>
+                    View Sensor &amp; Hardware Fleet →
+                  </span>
                 </div>
-              )}
+              </div>
             </section>
-          )}
 
-          {/* Tactical Zone GIS Map & Contributing Telemetry Factors Grid */}
-          <section className="zone-gis-telemetry-grid">
-
-            {/* Left Column: Tactical GIS Map */}
-            <div className="zone-gis-panel">
-              <div className="panel-section-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span>Tactical GIS Map</span>
-                <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', fontFamily: 'var(--font-main)' }} id="zoneGisMetaTag">Real-time Terrain</span>
-              </div>
-
-              <div className="zone-map-wrapper">
-                <div id="leafletZoneDetailMap" ref={zoneMapRef}></div>
+            {/* Overview Main Grid: 3D Map + Clean Zone Cards */}
+            <section className="overview-main-grid">
+              
+              {/* Map Panel */}
+              <div className="heatmap-panel-wrapper">
+                <div id="leafletOverviewMap" ref={overviewMapRef}></div>
                 <div className="heatmap-legend-badge">
-                  <span><strong style={{ color: '#dc2626' }}>■</strong> Perimeter</span>
-                  <span><strong style={{ color: '#2563eb' }}>●</strong> Sensors</span>
-                  <span><strong style={{ color: '#9333ea' }}>▲</strong> Villages</span>
-                  <span><strong style={{ color: '#dc2626' }}>x</strong> Road Block</span>
+                  <span><strong style={{ color: '#dc2626' }}>■</strong> Critical Risk (&gt;85%)</span>
+                  <span><strong style={{ color: '#ea580c' }}>■</strong> Warning Zone (65–85%)</span>
+                  <span><strong style={{ color: '#16a34a' }}>■</strong> Monitored</span>
                 </div>
               </div>
-            </div>
 
-            {/* Right Column: Contributing Factors Section */}
-            <div className="operational-panel" style={{ marginBottom: 0 }}>
-              <div className="panel-section-title">
-                <span>Contributing Factors</span>
+              {/* Monitored Zones List */}
+              <div className="danger-zones-panel">
+                <div className="panel-section-title">
+                  <span>Monitored Hazard Sectors</span>
+                </div>
+
+                <div className="zones-scroll-list">
+                  {Object.keys(ZONES_DATABASE).map(key => {
+                    const z = ZONES_DATABASE[key];
+                    const isCrit = z.severity === 'critical';
+                    return (
+                      <div key={key} className={`zone-summary-card ${isCrit ? 'critical' : 'warning'}`}>
+                        <div className="zone-card-header">
+                          <div className="zone-title-wrap">
+                            <span className="zone-name">{z.name}</span>
+                            <span className={`status-pill ${isCrit ? 'critical' : 'high'}`}>
+                              {z.finalRisk} Risk
+                            </span>
+                          </div>
+                          <button
+                            type="button"
+                            className="btn-inspect-zone"
+                            onClick={() => openZoneDetails(key)}
+                          >
+                            Inspect Sector →
+                          </button>
+                        </div>
+
+                        <div className="zone-metrics-grid-2col">
+                          <div className="zone-metric-box">
+                            <span className="metric-lbl">InSAR Creep Rate</span>
+                            <span className="metric-val" style={{ color: isCrit ? '#dc2626' : '#ea580c' }}>
+                              {z.satellite?.insarVelocity || 'Nominal'}
+                            </span>
+                          </div>
+                          <div className="zone-metric-box">
+                            <span className="metric-lbl">24h Rainfall</span>
+                            <span className="metric-val">
+                              {z.factors?.[0]?.value?.split(' ')?.[0] || '118'} mm
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="zone-shelter-box">
+                          <span className="shelter-tag-lbl">Evacuation Shelter</span>
+                          <span className="shelter-name-val">{z.shelter?.split('(')?.[0]}</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
 
-              <div className="factors-list-grid" id="detailFactorsList">
-                {zoneData.factors?.map((f, i) => (
-                  <div key={i} className="factor-item-row" style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 12px', borderBottom: '1px solid var(--border-light)', fontSize: '0.8rem' }}>
-                    <div>
-                      <strong style={{ color: 'var(--text-primary)' }}>{f.label}</strong>
-                      <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{f.source}</div>
-                    </div>
-                    <span style={{ fontWeight: 700, color: 'var(--color-critical)' }}>{f.value}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-          </section>
-
-          {/* =================================================================
-               CITIZEN ALARM RESPONSE & NON-RESPONDER RESCUE TRIAGE
-               ================================================================= */}
-          <section className="operational-panel" style={{ borderLeft: '4px solid #dc2626', background: 'linear-gradient(to bottom, #ffffff, #fffdfd)' }}>
-            <div className="panel-section-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <span style={{ fontSize: '1.02rem', fontWeight: 800, color: '#991b1b' }}>🚨 Resident Alarm Status &amp; Physical Rescue Triage</span>
-                <span className="status-pill critical" style={{ animation: 'pulse 2s infinite' }}>Live Sensor Telemetry</span>
-              </div>
-              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', fontSize: '0.78rem' }}>
-                <span style={{ padding: '3px 8px', borderRadius: '4px', background: '#dcfce7', color: '#166534', fontWeight: 700 }}>
-                  🟢 Responded / Safe: {citizenEvacuations.filter(c => c.status === 'acknowledged' || c.status === 'evacuating').length}
-                </span>
-                <span style={{ padding: '3px 8px', borderRadius: '4px', background: '#fee2e2', color: '#991b1b', fontWeight: 700 }}>
-                  🔴 Unresponsive (No Alarm Turn-Off): {citizenEvacuations.filter(c => c.status === 'unresponsive').length}
-                </span>
-                <span style={{ padding: '3px 8px', borderRadius: '4px', background: '#eff6ff', color: '#1e40af', fontWeight: 700 }}>
-                  🚨 Physical SDRF Units En Route: {citizenEvacuations.filter(c => c.qrtDispatched).length}
-                </span>
-              </div>
-            </div>
-
-            <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', margin: '4px 0 12px' }}>
-              Real-time monitoring of citizen emergency alarms in {zoneData.name}. Unresponsive households where alarms remain ringing without citizen acknowledgment are flagged for immediate physical SDRF rescue dispatch.
-            </p>
-
-            <table className="operational-table">
-              <thead>
-                <tr>
-                  <th>Resident / Dwelling Sector</th>
-                  <th>Zone Location</th>
-                  <th>Alarm &amp; Evacuation Status</th>
-                  <th>Target Relief Shelter</th>
-                  <th>Action / Physical Rescue</th>
-                </tr>
-              </thead>
-              <tbody>
-                {citizenEvacuations.map((c) => (
-                  <tr key={c.id} style={{ background: c.status === 'unresponsive' ? 'rgba(239, 68, 68, 0.05)' : 'transparent' }}>
-                    <td>
-                      <strong style={{ color: 'var(--text-primary)' }}>{c.name}</strong>
-                      <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{c.phone} &bull; Ref: {c.id}</div>
-                    </td>
-                    <td>
-                      <span style={{ fontSize: '0.78rem' }}>{c.location}</span>
-                    </td>
-                    <td>
-                      {c.status === 'unresponsive' ? (
-                        <span className="status-pill critical" style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', padding: '3px 8px' }}>
-                          <span style={{ width: '6px', height: '6px', background: '#fff', borderRadius: '50%', display: 'inline-block' }}></span>
-                          <span>{c.actionText}</span>
-                        </span>
-                      ) : c.status === 'evacuating' || c.status === 'acknowledged' ? (
-                        <span className="status-pill low" style={{ color: '#15803d', borderColor: '#bbf7d0', background: '#f0fdf4', padding: '3px 8px' }}>
-                          <span>{c.actionText}</span>
-                        </span>
-                      ) : (
-                        <span className="status-pill high" style={{ padding: '3px 8px' }}>
-                          <span>{c.actionText}</span>
-                        </span>
-                      )}
-                      <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: '2px' }}>Updated {c.lastUpdate}</div>
-                    </td>
-                    <td>
-                      <span style={{ fontSize: '0.78rem', color: 'var(--text-primary)', fontWeight: 600 }}>{c.shelterTarget}</span>
-                    </td>
-                    <td>
-                      {c.qrtDispatched ? (
-                        <span style={{ fontSize: '0.78rem', fontWeight: 700, color: '#2563eb', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="20 6 9 17 4 12" /></svg>
-                          <span>{c.qrtTeam} Dispatched</span>
-                        </span>
-                      ) : c.status === 'unresponsive' ? (
-                        <button
-                          type="button"
-                          className="btn-action-primary"
-                          onClick={() => handleDispatchPhysicalRescue(c)}
-                          style={{
-                            background: 'linear-gradient(135deg, #dc2626, #991b1b)',
-                            color: '#ffffff',
-                            padding: '6px 12px',
-                            borderRadius: '6px',
-                            border: 'none',
-                            fontSize: '0.76rem',
-                            fontWeight: 700,
-                            cursor: 'pointer',
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            gap: '5px',
-                            boxShadow: '0 2px 6px rgba(220, 38, 38, 0.3)'
-                          }}
-                          title="Dispatch Physical SDRF Rescue Team to check on unresponsive resident"
-                        >
-                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" /></svg>
-                          <span>Send Physical Rescue Team</span>
-                        </button>
-                      ) : (
-                        <span style={{ fontSize: '0.76rem', color: '#16a34a', fontWeight: 600 }}>
-                          ✓ Safe / Responsive
-                        </span>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </section>
-
-          {/* Affected Villages Section */}
-          <section className="operational-panel">
-            <div className="panel-section-title">
-              <span>Affected Villages</span>
-            </div>
-
-            <table className="operational-table">
-              <thead>
-                <tr>
-                  <th>Village / Sector</th>
-                  <th>Severity</th>
-                  <th>Proximity</th>
-                  <th>Road Access</th>
-                  <th>Priority Score</th>
-                </tr>
-              </thead>
-              <tbody id="detailVillagesTableBody">
-                {zoneData.villages?.map((v, i) => (
-                  <tr key={i}>
-                    <td><strong>{v.name}</strong></td>
-                    <td><span className={`status-pill ${v.severity}`}>{v.severity.toUpperCase()}</span></td>
-                    <td>{v.proximity}</td>
-                    <td><span className={`status-pill ${v.road}`}>{v.roadText}</span></td>
-                    <td><strong style={{ color: v.severity === 'critical' ? 'var(--color-critical)' : 'var(--color-high)' }}>{v.score}</strong></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </section>
-
-          {/* Affected Roads Section */}
-          <section className="operational-panel">
-            <div className="panel-section-title">
-              <span>Affected Roads &amp; Corridors</span>
-            </div>
-
-            <table className="operational-table">
-              <thead>
-                <tr>
-                  <th>Corridor</th>
-                  <th>Status</th>
-                  <th>Bypass Route</th>
-                  <th>Detour &amp; Delay</th>
-                </tr>
-              </thead>
-              <tbody id="detailRoadsTableBody">
-                {zoneData.roads?.map((r, i) => (
-                  <tr key={i}>
-                    <td><strong>{r.name}</strong></td>
-                    <td><span className={`status-pill ${r.status}`}>{r.statusText}</span></td>
-                    <td>{r.bypass}</td>
-                    <td>{r.delay}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </section>
-
-        </div>
-      </main>
+            </section>
+          </div>
+        </main>
+      )}
 
       {/* =====================================================================
-           PAGE 3 — ALERTS & HISTORY
+           PAGE 2: ZONE TACTICAL DETAILS & HARDWARE/SENSOR FLEET
            ===================================================================== */}
-      <main className={`admin-page-view ${activePage === 'page3' ? 'active' : ''}`} id="viewPage3History">
-        <div className="page-content-wrapper">
-
-          {/* Filter & Search Bar */}
-          <section className="history-filter-bar">
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-              <input
-                type="text"
-                className="search-input-field"
-                id="historySearchInput"
-                placeholder="Filter by zone or date..."
-                value={historySearch}
-                onChange={(e) => setHistorySearch(e.target.value)}
-              />
-              <select
-                className="zone-select-dropdown"
-                id="historyFilterZone"
-                value={historyZoneFilter}
-                onChange={(e) => setHistoryZoneFilter(e.target.value)}
-              >
-                <option value="all">All Zones</option>
-                <option value="Shillong">Shillong</option>
-                <option value="Cherrapunji">Cherrapunji</option>
-                <option value="Arunachal">Arunachal</option>
-              </select>
-            </div>
-            <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', fontFamily: 'var(--font-main)' }}>
-              Live Audit Log
-            </div>
-          </section>
-
-          {/* Dispatched Alerts Audit */}
-          <section className="operational-panel">
-            <div className="panel-section-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
-              <span>Dispatched Alerts Audit</span>
-              <span style={{ fontSize: '0.74rem', color: 'var(--text-muted)' }}>Click an alert row to inspect target resident evacuation status</span>
-            </div>
-
-            <table className="operational-table">
-              <thead>
-                <tr>
-                  <th>Ref ID</th>
-                  <th>Danger Zone</th>
-                  <th>Time</th>
-                  <th>Village Reach</th>
-                  <th>Channel</th>
-                  <th>Delivery</th>
-                  <th>Status</th>
-                  <th>Resident Tracking</th>
-                </tr>
-              </thead>
-              <tbody id="dispatchedAlertsTableBody">
-                {filteredHistory.map((a, i) => {
-                  const isSelected = a.refId === selectedHistoryAlertRef;
-                  const zoneStr = a.zone || a.zoneName || 'Shillong Urban & Ridge Slopes';
-                  const timeStr = a.time || a.timestamp || 'Just now';
-                  const reachStr = a.reach || a.villages || 'Shillong Peak (96%), Mawlai (95%)';
-                  const channelStr = a.channel || a.channels || 'SMS + Siren + Voice';
-                  const deliveryStr = a.delivery || a.deliveryRate || '98.4% Delivered';
-                  const statusStr = a.status || 'Active Warning';
-
+      {activePage === 'page2' && (
+        <main className="admin-page-view active">
+          <div className="page-content-wrapper">
+            
+            {/* Zone Selector & Emergency Dispatch Action Bar */}
+            <div className="zone-tactical-header-bar">
+              <div className="zone-selector-pills">
+                {Object.keys(ZONES_DATABASE).map(key => {
+                  const z = ZONES_DATABASE[key];
                   return (
-                    <tr
-                      key={i}
-                      onClick={() => {
-                        setSelectedHistoryAlertRef(a.refId);
-                        setShowPeopleModal(true);
-                      }}
-                      style={{
-                        cursor: 'pointer',
-                        background: isSelected ? 'rgba(37, 99, 235, 0.08)' : 'transparent',
-                        borderLeft: isSelected ? '4px solid var(--color-accent)' : 'none',
-                        transition: 'background 0.2s'
-                      }}
+                    <button
+                      key={key}
+                      type="button"
+                      className={`zone-pill-btn ${selectedZoneKey === key ? 'active' : ''}`}
+                      onClick={() => setSelectedZoneKey(key)}
                     >
-                      <td><code>{a.refId}</code></td>
-                      <td><strong>{zoneStr}</strong></td>
-                      <td>{timeStr}</td>
-                      <td>{reachStr}</td>
-                      <td><span className="status-pill low">{channelStr}</span></td>
-                      <td><strong>{deliveryStr}</strong></td>
-                      <td><span className="status-pill critical">{statusStr}</span></td>
-                      <td>
-                        <button
-                          type="button"
-                          className="btn-action-primary"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setSelectedHistoryAlertRef(a.refId);
-                            setShowPeopleModal(true);
-                          }}
-                          style={{
-                            background: isSelected ? 'var(--color-accent)' : 'var(--bg-card)',
-                            color: isSelected ? '#ffffff' : 'var(--text-primary)',
-                            border: '1px solid var(--border-light)',
-                            padding: '5px 12px',
-                            fontSize: '0.74rem',
-                            fontWeight: 700,
-                            borderRadius: '6px',
-                            cursor: 'pointer',
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            gap: '6px',
-                            boxShadow: '0 1px 3px rgba(0,0,0,0.08)'
-                          }}
-                        >
-                          <span>View People</span>
-                          <span style={{ background: '#dc2626', color: '#fff', borderRadius: '10px', padding: '1px 6px', fontSize: '0.65rem', fontWeight: 700 }}>
-                            {citizenEvacuations.filter(c => c.status === 'unresponsive').length} Pending
-                          </span>
-                        </button>
-                      </td>
-                    </tr>
+                      {z.name.split(' (')[0]}
+                    </button>
                   );
                 })}
-              </tbody>
-            </table>
-          </section>
+              </div>
 
-          {/* Rejected Dispatches Log */}
-          <section className="operational-panel">
-            <div className="panel-section-title">
-              <span>Rejected Dispatches Log</span>
+              <div className="tactical-actions">
+                <button
+                  type="button"
+                  className="btn-dispatch-emergency"
+                  onClick={() => setShowConfirmModal(true)}
+                >
+                  Broadcast Evacuation Order
+                </button>
+              </div>
             </div>
 
-            <table className="operational-table">
-              <thead>
-                <tr>
-                  <th>Ref ID</th>
-                  <th>Danger Zone</th>
-                  <th>Time</th>
-                  <th>Officer</th>
-                  <th>Reason / Notes</th>
-                  <th>Status</th>
-                </tr>
-              </thead>
-              <tbody id="rejectedAlertsTableBody">
-                {rejectedAlerts.map((r, i) => (
-                  <tr key={i}>
-                    <td><code>{r.refId}</code></td>
-                    <td><strong>{r.zone}</strong></td>
-                    <td>{r.time}</td>
-                    <td>{r.officer}</td>
-                    <td>{r.reason}</td>
-                    <td><span className="status-pill open">{r.status}</span></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </section>
+            {/* Tactical Grid: 3D GIS Map + Live Telemetry Sensor Grid */}
+            <div className="zone-detail-grid">
+              
+              {/* Tactical Sector Map */}
+              <div className="tactical-map-container">
+                <div id="tacticalZoneMap" ref={zoneMapRef}></div>
+              </div>
 
-        </div>
-      </main>
+              {/* Sensor Telemetry & Road Corridors */}
+              <div className="tactical-telemetry-panel">
+                <h3 className="section-heading">Key Sensor Telemetry &amp; Field Corridors</h3>
+
+                <div className="sensor-kpi-grid">
+                  <div className="sensor-card critical">
+                    <div className="sensor-tag-badge">INCLINOMETER</div>
+                    <div className="sensor-data">
+                      <div className="sensor-title">Borehole Sensor SH-101</div>
+                      <div className="sensor-val" style={{ color: '#dc2626' }}>4.8° / hr Tilt</div>
+                      <div className="sensor-sub">Exceeds Critical Threshold</div>
+                    </div>
+                  </div>
+
+                  <div className="sensor-card info">
+                    <div className="sensor-tag-badge" style={{ color: '#0284c7' }}>RAIN GAUGE</div>
+                    <div className="sensor-data">
+                      <div className="sensor-title">IMD Doppler AWS Station</div>
+                      <div className="sensor-val" style={{ color: '#0284c7' }}>118.0 mm / 24h</div>
+                      <div className="sensor-sub">Torrential Monsoon Rate</div>
+                    </div>
+                  </div>
+
+                  <div className="sensor-card warning">
+                    <div className="sensor-tag-badge" style={{ color: '#ea580c' }}>PIEZOMETER</div>
+                    <div className="sensor-data">
+                      <div className="sensor-title">Pore Saturation Node</div>
+                      <div className="sensor-val" style={{ color: '#ea580c' }}>89.2% Saturated</div>
+                      <div className="sensor-sub">Liquefaction Hazard</div>
+                    </div>
+                  </div>
+
+                  <div className="sensor-card sat">
+                    <div className="sensor-tag-badge" style={{ color: '#7c3aed' }}>INSAR RADAR</div>
+                    <div className="sensor-data">
+                      <div className="sensor-title">Sentinel-1 Displacement</div>
+                      <div className="sensor-val" style={{ color: '#7c3aed' }}>+15.8 mm / wk</div>
+                      <div className="sensor-sub">Continuous Ground Creep</div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Road Corridors & Bypasses */}
+                <h3 className="section-heading" style={{ marginTop: '16px' }}>Monitored Corridors &amp; Bypasses</h3>
+                <div className="corridor-list-mini">
+                  {(zoneData.roads || []).map((road, idx) => (
+                    <div
+                      key={idx}
+                      className={`corridor-item-mini ${road.status}`}
+                      onClick={() => setSelectedRoadModal(road)}
+                      style={{ cursor: 'pointer' }}
+                      title="Click to view full Road Corridor & Bypass Dossier"
+                    >
+                      <div className="corridor-top">
+                        <span className="road-name">{road.name}</span>
+                        <span className={`status-pill ${road.status === 'blocked' ? 'critical' : (road.status === 'restricted' ? 'high' : 'low')}`}>
+                          {road.status.toUpperCase()}
+                        </span>
+                      </div>
+                      <div className="corridor-bypass">
+                        <span>Bypass: <strong>{road.bypass}</strong></span>
+                        <span className="delay-badge">{road.delay}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+              </div>
+
+            </div>
+
+            {/* =========================================================
+                 MASTER SENSOR & HARDWARE DIAGNOSTIC FLEET MATRIX
+                 ========================================================= */}
+            <section className="hardware-diagnostics-section">
+              <div className="hardware-section-header">
+                <div className="hardware-header-left">
+                  <h3 className="hardware-section-title">
+                    <span className="hw-icon">📡</span> Sensor Telemetry &amp; Hardware Diagnostics Fleet
+                  </h3>
+                  <p className="hardware-section-subtitle">
+                    Live operational telemetry, battery levels, RF signal strength, and raw register data across all deployed hardware nodes in {zoneData.name.split(' (')[0]}.
+                  </p>
+                </div>
+
+                {/* Fleet Health Summary Banner */}
+                <div className="hardware-fleet-stats">
+                  <div className="hw-fleet-kpi">
+                    <span className="hw-kpi-label">Deployed Nodes</span>
+                    <span className="hw-kpi-val">{(zoneData.hardwareNodes || []).length} Units</span>
+                  </div>
+                  <div className="hw-fleet-kpi">
+                    <span className="hw-kpi-label">Operational Health</span>
+                    <span className="hw-kpi-val" style={{ color: '#16a34a' }}>
+                      {(zoneData.hardwareNodes || []).filter(n => n.online).length}/{(zoneData.hardwareNodes || []).length} Online
+                    </span>
+                  </div>
+                  <div className="hw-fleet-kpi">
+                    <span className="hw-kpi-label">Threshold Exceedances</span>
+                    <span className="hw-kpi-val" style={{ color: '#dc2626' }}>
+                      {(zoneData.hardwareNodes || []).filter(n => n.status === 'critical').length} Critical
+                    </span>
+                  </div>
+                  <div className="hw-fleet-kpi">
+                    <span className="hw-kpi-label">LoRa Mesh Uplink</span>
+                    <span className="hw-kpi-val" style={{ color: '#2563eb' }}>99.8% Active</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Filter Toolbar & Live Search */}
+              <div className="hardware-toolbar">
+                <div className="filter-chips">
+                  <button
+                    type="button"
+                    className={`filter-chip ${hardwareFilter === 'all' ? 'active' : ''}`}
+                    onClick={() => setHardwareFilter('all')}
+                  >
+                    All Hardware ({(zoneData.hardwareNodes || []).length})
+                  </button>
+                  <button
+                    type="button"
+                    className={`filter-chip ${hardwareFilter === 'inclinometer' ? 'active' : ''}`}
+                    onClick={() => setHardwareFilter('inclinometer')}
+                  >
+                    Inclinometers &amp; Tilt
+                  </button>
+                  <button
+                    type="button"
+                    className={`filter-chip ${hardwareFilter === 'rain_gauge' ? 'active' : ''}`}
+                    onClick={() => setHardwareFilter('rain_gauge')}
+                  >
+                    Rain Gauges AWS
+                  </button>
+                  <button
+                    type="button"
+                    className={`filter-chip ${hardwareFilter === 'piezometer' ? 'active' : ''}`}
+                    onClick={() => setHardwareFilter('piezometer')}
+                  >
+                    Piezometers &amp; Soil TDR
+                  </button>
+                  <button
+                    type="button"
+                    className={`filter-chip ${hardwareFilter === 'network' ? 'active' : ''}`}
+                    onClick={() => setHardwareFilter('network')}
+                  >
+                    Gateways, Radar &amp; Sirens
+                  </button>
+                </div>
+
+                <input
+                  type="text"
+                  className="input-report-search"
+                  placeholder="Search node ID, model, sensor metric..."
+                  value={hardwareSearch}
+                  onChange={(e) => setHardwareSearch(e.target.value)}
+                  style={{ maxWidth: '320px' }}
+                />
+              </div>
+
+              {/* Hardware Telemetry Roster Table */}
+              <div className="hardware-table-container">
+                <table className="admin-triage-table hardware-matrix-table">
+                  <thead>
+                    <tr>
+                      <th>Hardware Node</th>
+                      <th>Sensor Classification</th>
+                      <th>Operational Health</th>
+                      <th>Power / Battery</th>
+                      <th>Signal &amp; Uplink</th>
+                      <th>Live Telemetry Reading</th>
+                      <th>Calibration / Threshold</th>
+                      <th style={{ textAlign: 'right' }}>Diagnostics</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(zoneData.hardwareNodes || [])
+                      .filter(node => {
+                        const matchCategory =
+                          hardwareFilter === 'all' ||
+                          (hardwareFilter === 'inclinometer' && (node.category === 'inclinometer' || node.category === 'tiltmeter')) ||
+                          (hardwareFilter === 'rain_gauge' && node.category === 'rain_gauge') ||
+                          (hardwareFilter === 'piezometer' && (node.category === 'piezometer' || node.category === 'tdr_soil')) ||
+                          (hardwareFilter === 'network' && (node.category === 'gateway' || node.category === 'siren_tower' || node.category === 'insar_radar'));
+                        
+                        const q = hardwareSearch.toLowerCase().trim();
+                        const matchQuery =
+                          !q ||
+                          node.id.toLowerCase().includes(q) ||
+                          node.name.toLowerCase().includes(q) ||
+                          node.model.toLowerCase().includes(q) ||
+                          node.typeLabel.toLowerCase().includes(q) ||
+                          (node.primaryMetric && node.primaryMetric.toLowerCase().includes(q));
+
+                        return matchCategory && matchQuery;
+                      })
+                      .map((node) => {
+                        const isCrit = node.status === 'critical';
+                        const isWarn = node.status === 'warning';
+
+                        return (
+                          <tr key={node.id} className={`hw-row ${isCrit ? 'row-critical' : isWarn ? 'row-warning' : ''}`}>
+                            <td>
+                              <div className="hw-node-identity">
+                                <span className="hw-node-id">{node.id}</span>
+                                <span className="hw-node-name">{node.name}</span>
+                                <span className="hw-node-model">{node.model}</span>
+                              </div>
+                            </td>
+                            <td>
+                              <span className={`sensor-class-badge ${node.category}`}>
+                                {node.typeLabel}
+                              </span>
+                            </td>
+                            <td>
+                              <div className="hw-status-cell">
+                                <span className={`status-pill ${isCrit ? 'critical' : isWarn ? 'high' : 'low'}`}>
+                                  <span className={`status-dot-pulse ${isCrit ? 'crit' : isWarn ? 'warn' : 'ok'}`}></span>
+                                  {node.statusText}
+                                </span>
+                                <span className="hw-last-ping">Ping: {node.lastPing}</span>
+                              </div>
+                            </td>
+                            <td>
+                              <div className="hw-battery-cell">
+                                <span className="battery-val">{node.battery}</span>
+                                <span className="battery-sub">{node.battery.includes('Solar') ? '⚡ Solar Active' : '🔋 Direct Cell'}</span>
+                              </div>
+                            </td>
+                            <td>
+                              <div className="hw-signal-cell">
+                                <span className="signal-rssi">{node.signal}</span>
+                                <span className="signal-loss">Loss: {node.packetLoss}</span>
+                              </div>
+                            </td>
+                            <td>
+                              <div className="hw-metric-cell">
+                                <span className="primary-metric-val" style={{ color: isCrit ? '#dc2626' : isWarn ? '#ea580c' : '#16a34a' }}>
+                                  {node.primaryMetric}
+                                </span>
+                              </div>
+                            </td>
+                            <td>
+                              <span className="hw-threshold-tag">
+                                {node.threshold}
+                              </span>
+                            </td>
+                            <td style={{ textAlign: 'right' }}>
+                              <button
+                                type="button"
+                                className="btn-inspect-hardware"
+                                onClick={() => setSelectedHardwareModal(node)}
+                              >
+                                Inspect Diagnostics →
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+
+          </div>
+        </main>
+      )}
 
       {/* =====================================================================
-           PAGE 4 — CITIZEN REPORTS & FIELD DISPATCH
+           PAGE 4: CITIZEN DISTRESS REPORTS (PROFESSIONAL TRIAGE TABLE)
            ===================================================================== */}
-      <main className={`admin-page-view ${activePage === 'page4' ? 'active' : ''}`} id="viewPage4Reports">
-        <div className="page-content-wrapper">
+      {activePage === 'page4' && (
+        <main className="admin-page-view active">
+          <div className="page-content-wrapper">
+            
+            {/* Filter & Search Bar */}
+            <div className="report-triage-toolbar">
+              <div className="filter-chips">
+                <button
+                  type="button"
+                  className={`filter-chip ${reportFilter === 'all' ? 'active' : ''}`}
+                  onClick={() => setReportFilter('all')}
+                >
+                  All Incidents ({citizenReports.length})
+                </button>
+                <button
+                  type="button"
+                  className={`filter-chip ${reportFilter === 'pending' ? 'active' : ''}`}
+                  onClick={() => setReportFilter('pending')}
+                >
+                  Pending Triage ({citizenReports.filter(r => r.status === 'pending').length})
+                </button>
+                <button
+                  type="button"
+                  className={`filter-chip ${reportFilter === 'critical' ? 'active' : ''}`}
+                  onClick={() => setReportFilter('critical')}
+                >
+                  Critical Priority ({citizenReports.filter(r => r.severity === 'critical').length})
+                </button>
+                <button
+                  type="button"
+                  className={`filter-chip ${reportFilter === 'resolved' ? 'active' : ''}`}
+                  onClick={() => setReportFilter('resolved')}
+                >
+                  Resolved ({citizenReports.filter(r => r.status === 'resolved').length})
+                </button>
+              </div>
 
-          {/* Top Filter & Search Bar */}
-          <section className="history-filter-bar">
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
               <input
                 type="text"
-                className="search-input-field"
-                id="reportSearchInput"
-                placeholder="Filter by report ID, location, or citizen..."
+                className="input-report-search"
+                placeholder="Search by ID, reporter, sector..."
                 value={reportSearch}
                 onChange={(e) => setReportSearch(e.target.value)}
               />
-              <div className="filter-pills-row" style={{ margin: 0 }}>
-                <button
-                  type="button"
-                  className={`filter-pill ${reportFilter === 'all' ? 'active' : ''}`}
-                  onClick={() => setReportFilter('all')}
-                >
-                  All ({citizenReports.length})
-                </button>
-                <button
-                  type="button"
-                  className={`filter-pill ${reportFilter === 'pending' ? 'active' : ''}`}
-                  onClick={() => setReportFilter('pending')}
-                >
-                  Pending Check ({citizenReports.filter(r => r.status === 'pending').length})
-                </button>
-                <button
-                  type="button"
-                  className={`filter-pill ${reportFilter === 'verified' ? 'active' : ''}`}
-                  onClick={() => setReportFilter('verified')}
-                >
-                  Verified ({citizenReports.filter(r => r.status === 'verified').length})
-                </button>
-                <button
-                  type="button"
-                  className={`filter-pill ${reportFilter === 'critical' ? 'active' : ''}`}
-                  onClick={() => setReportFilter('critical')}
-                >
-                  Critical ({citizenReports.filter(r => r.severity === 'critical').length})
-                </button>
-              </div>
-            </div>
-            <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', fontFamily: 'var(--font-main)' }}>
-              Live Citizen Telemetry Feed
-            </div>
-          </section>
-
-          {/* Citizen Reports List Grid */}
-          <section className="reports-feed-grid" id="citizenReportsFeedContainer">
-            {filteredReports.map((report) => (
-              <div key={report.id} className="report-feed-card" style={{ background: '#ffffff', border: '1px solid var(--border-light)', borderRadius: '12px', padding: '16px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                  <div>
-                    <span style={{ fontSize: '0.7rem', fontWeight: 800, color: 'var(--color-accent)' }}>{report.id}</span>
-                    <h4 style={{ fontSize: '0.98rem', fontWeight: 800, color: 'var(--text-primary)', margin: '2px 0' }}>{report.category}</h4>
-                    <span style={{ fontSize: '0.76rem', color: 'var(--text-muted)' }}>{report.location} • {report.timestamp}</span>
-                  </div>
-                  <span className={`status-pill ${report.severity === 'critical' ? 'critical' : 'high'}`}>{report.urgencyText}</span>
-                </div>
-
-                <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.4 }}>
-                  {report.description}
-                </p>
-
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid var(--border-light)', paddingTop: '10px', fontSize: '0.76rem' }}>
-                  <span style={{ color: report.status === 'pending' ? '#ea580c' : '#16a34a', fontWeight: 700 }}>
-                    Status: {report.statusText}
-                  </span>
-                  <div style={{ display: 'flex', gap: '8px' }}>
-                    <button
-                      type="button"
-                      className="btn-action-secondary"
-                      style={{ padding: '4px 10px', fontSize: '0.75rem' }}
-                      onClick={() => {
-                        setSelectedCitizenReport(report);
-                        setShowCitizenModal(true);
-                      }}
-                    >
-                      Inspect Evidence
-                    </button>
-                    {report.status === 'pending' && (
-                      <button
-                        type="button"
-                        className="btn-action-primary"
-                        style={{ padding: '4px 10px', fontSize: '0.75rem' }}
-                        onClick={() => handleDispatchQRT(report.id)}
-                      >
-                        Dispatch QRT
-                      </button>
-                    )}
-                  </div>
-                </div>
-              </div>
-            ))}
-          </section>
-
-        </div>
-      </main>
-
-      {/* =====================================================================
-           CITIZEN REPORT EVIDENCE MODAL
-           ===================================================================== */}
-      {showCitizenModal && selectedCitizenReport && (
-        <div className="modal-overlay-backdrop" id="citizenReportModal" style={{ display: 'flex' }}>
-          <div className="modal-card-box" style={{ maxWidth: '680px' }}>
-            <div className="modal-card-header">
-              <span id="citizenModalTitle">Citizen Report Evidence &amp; Verification — {selectedCitizenReport.id}</span>
-              <button
-                type="button"
-                onClick={() => setShowCitizenModal(false)}
-                style={{ background: 'none', border: 'none', color: '#ffffff', fontSize: '1.2rem', cursor: 'pointer' }}
-              >
-                &times;
-              </button>
             </div>
 
-            <div className="modal-card-body" id="citizenModalBody">
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px', marginBottom: '14px' }}>
-                <div>
-                  <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', fontWeight: 700, textTransform: 'uppercase' }}>Reporter</span>
-                  <div style={{ fontWeight: 800, fontSize: '0.9rem' }}>{selectedCitizenReport.reporter} ({selectedCitizenReport.contact})</div>
-                </div>
-                <div>
-                  <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', fontWeight: 700, textTransform: 'uppercase' }}>GPS Pin</span>
-                  <div style={{ fontWeight: 800, fontSize: '0.9rem' }}>{selectedCitizenReport.coordsText}</div>
-                </div>
-              </div>
-
-              <div style={{ marginBottom: '14px' }}>
-                <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', fontWeight: 700, textTransform: 'uppercase' }}>Citizen Observation</span>
-                <p style={{ background: '#f8fafc', padding: '10px 12px', borderRadius: '8px', border: '1px solid var(--border-light)', fontSize: '0.85rem', margin: '4px 0 0' }}>
-                  {selectedCitizenReport.description}
-                </p>
-              </div>
-
-              <div>
-                <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', fontWeight: 700, textTransform: 'uppercase' }}>Attached Photo Evidence</span>
-                <div style={{ width: '100%', height: '180px', borderRadius: '8px', overflow: 'hidden', marginTop: '6px', background: '#090d16', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#94a3b8', fontSize: '0.85rem' }}>
-                  <img
-                    src="https://images.unsplash.com/photo-1544620347-c4fd4a3d5957?w=800&auto=format&fit=crop&q=80"
-                    alt="Ground Hazard Evidence"
-                    style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                  />
-                </div>
-              </div>
-            </div>
-
-            <div className="modal-card-footer" id="citizenModalFooter">
-              <button type="button" className="btn-action-secondary" onClick={() => setShowCitizenModal(false)}>Close</button>
-              {selectedCitizenReport.status === 'pending' && (
-                <button type="button" className="btn-action-primary" onClick={() => handleDispatchQRT(selectedCitizenReport.id)}>
-                  Dispatch Field QRT Officer
-                </button>
-              )}
-              {selectedCitizenReport.status !== 'resolved' && (
-                <button type="button" className="btn-zone-accept" style={{ padding: '6px 14px' }} onClick={() => handleResolveReport(selectedCitizenReport.id)}>
-                  Mark Resolved
-                </button>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* =====================================================================
-           CONFIRMATION STEP MODAL (BEFORE ALERT DISPATCH)
-           ===================================================================== */}
-      {showConfirmModal && (
-        <div className="modal-overlay-backdrop" id="sendAlertConfirmModal" style={{ display: 'flex' }}>
-          <div className="modal-card-box">
-            <div className="modal-card-header">
-              <span>Confirm Alert Broadcast — {zoneData.name}</span>
-              <button
-                type="button"
-                onClick={() => setShowConfirmModal(false)}
-                style={{ background: 'none', border: 'none', color: '#ffffff', fontSize: '1.2rem', cursor: 'pointer' }}
-              >
-                &times;
-              </button>
-            </div>
-
-            <div className="modal-card-body">
-              <div style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', marginBottom: '8px' }}>
-                Review channel reachability before siren activation:
-              </div>
-
-              <table className="operational-table">
+            {/* Professional Incident Triage Table */}
+            <div className="report-table-container">
+              <table className="admin-triage-table">
                 <thead>
                   <tr>
-                    <th>Settlement</th>
-                    <th>Relief Shelter</th>
-                    <th>Channel</th>
-                    <th>Reachability</th>
+                    <th>Incident ID</th>
+                    <th>Reporter Details</th>
+                    <th>Location Sector</th>
+                    <th>Hazard Classification</th>
+                    <th>Priority</th>
+                    <th>Status</th>
+                    <th style={{ textAlign: 'right' }}>Actions</th>
                   </tr>
                 </thead>
-                <tbody id="modalFeasibilityTableBody">
-                  <tr>
-                    <td><strong>Shillong Peak Ridge Sector</strong></td>
-                    <td>Shillong Municipal Relief Center #1</td>
-                    <td><span className="status-pill low">App Push + SMS + Siren</span></td>
-                    <td><strong>99%</strong></td>
-                  </tr>
-                  <tr>
-                    <td><strong>Mawlai Valley Settlement</strong></td>
-                    <td>Mawlai Higher Secondary Camp</td>
-                    <td><span className="status-pill low">SMS Fallback + LoRa</span></td>
-                    <td><strong>95%</strong></td>
-                  </tr>
-                  <tr>
-                    <td><strong>Laitumkhrah Upper Slope</strong></td>
-                    <td>St. Anthony Relief Safe Zone</td>
-                    <td><span className="status-pill low">App + SMS</span></td>
-                    <td><strong>97%</strong></td>
-                  </tr>
-                  <tr>
-                    <td><strong>Polo Ground Community Sector</strong></td>
-                    <td>Polo Ground High Ground Camp</td>
-                    <td><span className="status-pill high">Siren Tower #1 + Sat</span></td>
-                    <td><strong>100%</strong></td>
-                  </tr>
+                <tbody>
+                  {filteredReports.map(report => (
+                    <tr
+                      key={report.id}
+                      className={`triage-row-item ${report.severity} clickable-case-row`}
+                      onClick={() => setSelectedCaseModal(report)}
+                      title="Click to view complete case dossier & diagnostics"
+                    >
+                      <td>
+                        <span className="triage-ref-badge">{report.id}</span>
+                        <div className="triage-time-sub">{report.timestamp || report.time || '14m ago'}</div>
+                      </td>
+                      <td>
+                        <strong>{report.reporter}</strong>
+                        <div className="triage-phone-sub">{report.contact || report.phone}</div>
+                      </td>
+                      <td>
+                        <span className="triage-location-text">{report.location}</span>
+                        {report.coordsText && (
+                          <div className="triage-coords-sub">{report.coordsText}</div>
+                        )}
+                      </td>
+                      <td>
+                        <span className="triage-hazard-text">{report.category || report.type || 'Slope Debris / Fissure'}</span>
+                        <div className="triage-desc-snippet">{report.description || report.desc}</div>
+                      </td>
+                      <td>
+                        <span className={`status-pill ${report.severity === 'critical' ? 'critical' : 'high'}`}>
+                          {report.severity === 'critical' ? 'CRITICAL' : 'WARNING'}
+                        </span>
+                      </td>
+                      <td>
+                        <span className={`status-pill ${report.status === 'resolved' ? 'low' : (report.status === 'dispatched' ? 'high' : 'critical')}`}>
+                          {report.status === 'resolved' ? 'RESOLVED' : (report.status === 'dispatched' ? 'OFFICER EN ROUTE' : 'PENDING')}
+                        </span>
+                      </td>
+                      <td style={{ textAlign: 'right' }}>
+                        <div className="triage-action-cell" onClick={(e) => e.stopPropagation()}>
+                          <button
+                            type="button"
+                            className="btn-table-details"
+                            onClick={() => setSelectedCaseModal(report)}
+                            title="View full case dossier"
+                          >
+                            View Details
+                          </button>
+                          {report.status !== 'resolved' ? (
+                            <>
+                              <button
+                                type="button"
+                                className="btn-table-dispatch"
+                                onClick={() => handleDispatchFieldOfficer(report.id)}
+                              >
+                                Dispatch Field Officer
+                              </button>
+                              <button
+                                type="button"
+                                className="btn-table-resolve"
+                                onClick={() => handleResolveReport(report.id)}
+                              >
+                                Mark Resolved
+                              </button>
+                            </>
+                          ) : (
+                            <span className="status-resolved-tag">Cleared</span>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
-
-              <div style={{ background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 'var(--radius-xs)', padding: '8px 12px', fontSize: '0.76rem', color: '#991b1b', display: 'flex', alignItems: 'center', gap: '8px', marginTop: '12px' }}>
-                <strong style={{ background: '#be123c', color: '#ffffff', padding: '1px 6px', borderRadius: '3px', fontSize: '0.68rem' }}>BROADCAST</strong>
-                <span>Triggers district-wide sirens, emergency popups, and automatic sequential voice alerts (Buzzer → Hindi → Buzzer → English).</span>
-              </div>
             </div>
 
-            <div className="modal-card-footer">
-              <button type="button" className="btn-action-secondary" onClick={() => setShowConfirmModal(false)}>Cancel</button>
-              <button type="button" className="btn-action-primary" onClick={confirmAndDispatchAlert}>Transmit Broadcast</button>
-            </div>
           </div>
-        </div>
+        </main>
       )}
 
       {/* =====================================================================
-           STAT DETAIL MODAL
+           PAGE 3: ALERTS & EVACUATION TRACKING
            ===================================================================== */}
-      {showStatModal && (
-        <div className="modal-overlay-backdrop" id="statDetailModal" style={{ display: 'flex' }}>
-          <div className="modal-card-box" style={{ maxWidth: '780px' }}>
-            <div className="modal-card-header">
-              <span id="statDetailModalTitle">Telemetry Breakdown — {statModalType.toUpperCase()}</span>
-              <button
-                type="button"
-                onClick={() => setShowStatModal(false)}
-                style={{ background: 'none', border: 'none', color: '#ffffff', fontSize: '1.2rem', cursor: 'pointer' }}
-              >
-                &times;
-              </button>
-            </div>
+      {activePage === 'page3' && (() => {
+        const countTurnedOff = citizenEvacuations.filter(c => c.alarmStatus === 'turned_off' || c.status === 'evacuating' || c.status === 'sheltered' || c.status === 'acknowledged').length;
+        const countNotTurnedOff = citizenEvacuations.filter(c => (c.alarmStatus === 'not_turned_off' || c.status === 'unresponsive') && !c.officerDispatched).length;
+        const countDispatched = citizenEvacuations.filter(c => c.officerDispatched || c.alarmStatus === 'dispatched' || c.status === 'rescuing').length;
 
-            <div className="modal-card-body" id="statDetailModalBody">
-              {statModalType === 'danger-zones' && (
-                <div>
-                  <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                    Active monitored zones categorized by Machine Learning composite vulnerability scoring:
-                  </p>
-                  <table className="operational-table" style={{ marginTop: '10px' }}>
-                    <thead>
-                      <tr>
-                        <th>Zone Name</th>
-                        <th>Risk Score</th>
-                        <th>Confidence</th>
-                        <th>Action Window</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      <tr>
-                        <td><strong>Shillong Urban &amp; Ridge Slopes</strong></td>
-                        <td><span className="status-pill critical">94.6% CRITICAL</span></td>
-                        <td>93.8%</td>
-                        <td>~45 min</td>
-                      </tr>
-                      <tr>
-                        <td><strong>Cherrapunji (Sohra) Escarpment</strong></td>
-                        <td><span className="status-pill critical">98.0% CRITICAL</span></td>
-                        <td>96.2%</td>
-                        <td>~30 min</td>
-                      </tr>
-                      <tr>
-                        <td><strong>Remote Slopes, Arunachal Pradesh</strong></td>
-                        <td><span className="status-pill high">72.4% HIGH</span></td>
-                        <td>88.4%</td>
-                        <td>~4 hrs</td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
-              )}
+        const filteredEvacuations = citizenEvacuations.filter(c => {
+          const isTurnedOff = c.alarmStatus === 'turned_off' || c.status === 'evacuating' || c.status === 'sheltered' || c.status === 'acknowledged';
+          const isNotTurnedOff = (c.alarmStatus === 'not_turned_off' || c.status === 'unresponsive') && !c.officerDispatched;
+          const isDispatched = c.officerDispatched || c.alarmStatus === 'dispatched' || c.status === 'rescuing';
 
-              {statModalType === 'villages' && (
-                <div>
-                  <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                    Settlements with active early warning evacuation corridors:
-                  </p>
-                  <table className="operational-table" style={{ marginTop: '10px' }}>
-                    <thead>
-                      <tr>
-                        <th>Settlement</th>
-                        <th>Severity</th>
-                        <th>Population Reach</th>
-                        <th>Shelter Distance</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      <tr>
-                        <td><strong>Shillong Peak Ridge Sector</strong></td>
-                        <td><span className="status-pill critical">Critical</span></td>
-                        <td>1,420 citizens</td>
-                        <td>0.4 km (Municipal Camp #1)</td>
-                      </tr>
-                      <tr>
-                        <td><strong>Mawlai Valley Settlement</strong></td>
-                        <td><span className="status-pill critical">Critical</span></td>
-                        <td>2,800 citizens</td>
-                        <td>1.2 km (Mawlai Campus)</td>
-                      </tr>
-                      <tr>
-                        <td><strong>Laitumkhrah Upper Slope</strong></td>
-                        <td><span className="status-pill high">High</span></td>
-                        <td>3,150 citizens</td>
-                        <td>1.8 km (St. Anthony Safe Zone)</td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
-              )}
+          let matchFilter = true;
+          if (evacFilter === 'turned_off') matchFilter = isTurnedOff;
+          else if (evacFilter === 'not_turned_off') matchFilter = isNotTurnedOff;
+          else if (evacFilter === 'dispatched') matchFilter = isDispatched;
 
-              {statModalType === 'roads' && (
-                <div>
-                  <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                    Real-time traffic and slope corridor monitoring status:
-                  </p>
-                  <table className="operational-table" style={{ marginTop: '10px' }}>
-                    <thead>
-                      <tr>
-                        <th>Road Corridor</th>
-                        <th>Status</th>
-                        <th>Bypass Available</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      <tr>
-                        <td><strong>GS Road Urban Corridor</strong></td>
-                        <td><span className="status-pill blocked">Blocked</span></td>
-                        <td>Shillong Peak Link Bypass (+15m)</td>
-                      </tr>
-                      <tr>
-                        <td><strong>Sohra Escarpment Road</strong></td>
-                        <td><span className="status-pill blocked">Blocked</span></td>
-                        <td>Nohkalikai Ridge Transit Route (+20m)</td>
-                      </tr>
-                      <tr>
-                        <td><strong>Shillong Bypass Highway</strong></td>
-                        <td><span className="status-pill open">Open &amp; Clear</span></td>
-                        <td>Direct Arterial Highway</td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
-              )}
+          const query = evacSearch.trim().toLowerCase();
+          const matchSearch = query === '' ||
+            c.name.toLowerCase().includes(query) ||
+            c.id.toLowerCase().includes(query) ||
+            c.location.toLowerCase().includes(query) ||
+            c.phone.toLowerCase().includes(query) ||
+            (c.zone || '').toLowerCase().includes(query) ||
+            (c.shelterTarget || '').toLowerCase().includes(query);
 
-              {statModalType === 'hardware' && (
-                <div>
-                  <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                    LoRa mesh gateway network &amp; sensor telemetry status:
-                  </p>
-                  <table className="operational-table" style={{ marginTop: '10px' }}>
-                    <thead>
-                      <tr>
-                        <th>Node ID</th>
-                        <th>Type</th>
-                        <th>Status</th>
-                        <th>Diagnostics</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      <tr>
-                        <td><strong>GW-SH01</strong></td>
-                        <td>LoRa Gateway (Sector 4)</td>
-                        <td><span className="status-pill critical">Silent Spike</span></td>
-                        <td>Lost post 4.8°/hr tilt exceedance</td>
-                      </tr>
-                      <tr>
-                        <td><strong>SN-101</strong></td>
-                        <td>Inclinometer</td>
-                        <td><span className="status-pill critical">Warning Alert</span></td>
-                        <td>Tilt rate 4.8°/hr</td>
-                      </tr>
-                      <tr>
-                        <td><strong>PZ-SH</strong></td>
-                        <td>Piezometer</td>
-                        <td><span className="status-pill high">High Saturation</span></td>
-                        <td>89.2% pore pressure moisture</td>
-                      </tr>
-                      <tr>
-                        <td><strong>GW-02..07</strong></td>
-                        <td>Mesh Nodes (6)</td>
-                        <td><span className="status-pill open">Online</span></td>
-                        <td>Nominal 12.8V battery</td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </div>
-
-            <div className="modal-card-footer">
-              <button type="button" className="btn-action-secondary" onClick={() => setShowStatModal(false)}>Close</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* =====================================================================
-           SATELLITE HIGH-RESOLUTION INSPECTOR MODAL
-           ===================================================================== */}
-      {showSatModal && (
-        <div className="modal-overlay-backdrop" id="satelliteInspectorModal" style={{ display: 'flex' }}>
-          <div className="modal-card-box" style={{ maxWidth: '960px', width: '95vw' }}>
-            <div className="modal-card-header">
-              <span id="satModalTitle">Satellite High-Resolution Earth Observation &amp; ML Vision Inspector</span>
-              <button
-                type="button"
-                onClick={() => setShowSatModal(false)}
-                style={{ background: 'none', border: 'none', color: '#ffffff', fontSize: '1.2rem', cursor: 'pointer' }}
-              >
-                &times;
-              </button>
-            </div>
-
-            <div className="modal-card-body" id="satModalBody" style={{ padding: '16px' }}>
-              <div style={{ display: 'flex', gap: '8px', marginBottom: '14px' }}>
-                <button
-                  type="button"
-                  className={`filter-pill ${satModalMode === 'sentinel-1' ? 'active' : ''}`}
-                  onClick={() => setSatModalMode('sentinel-1')}
-                >
-                  Sentinel-1 SAR InSAR (Ground Deformation)
-                </button>
-                <button
-                  type="button"
-                  className={`filter-pill ${satModalMode === 'sentinel-2' ? 'active' : ''}`}
-                  onClick={() => setSatModalMode('sentinel-2')}
-                >
-                  Sentinel-2 Optical (NDVI / Moisture)
-                </button>
-                <button
-                  type="button"
-                  className={`filter-pill ${satModalMode === 'compare' ? 'active' : ''}`}
-                  onClick={() => setSatModalMode('compare')}
-                >
-                  Split Compare (Before vs After)
-                </button>
-              </div>
-
-              {satModalMode === 'sentinel-1' && (
-                <div style={{ width: '100%', height: '340px', background: '#090d16', borderRadius: '10px', overflow: 'hidden', position: 'relative' }}>
-                  <img
-                    src="https://images.unsplash.com/photo-1507525428034-b723cf961d3e?w=1200&auto=format&fit=crop&q=80"
-                    alt="Sentinel-1 SAR InSAR"
-                    style={{ width: '100%', height: '100%', objectFit: 'cover', filter: 'hue-rotate(180deg) contrast(1.2)' }}
-                  />
-                  <div style={{ position: 'absolute', bottom: 12, left: 12, background: 'rgba(0,0,0,0.75)', padding: '6px 12px', borderRadius: '6px', fontSize: '0.78rem', color: '#ffffff' }}>
-                    🛰️ InSAR Coherence: +15.8 mm/wk displacement anomaly on Shillong ridge slope
-                  </div>
-                </div>
-              )}
-
-              {satModalMode === 'sentinel-2' && (
-                <div style={{ width: '100%', height: '340px', background: '#090d16', borderRadius: '10px', overflow: 'hidden', position: 'relative' }}>
-                  <img
-                    src="https://images.unsplash.com/photo-1500382017468-9049fed747ef?w=1200&auto=format&fit=crop&q=80"
-                    alt="Sentinel-2 Optical"
-                    style={{ width: '100%', height: '100%', objectFit: 'cover', filter: 'contrast(1.3)' }}
-                  />
-                  <div style={{ position: 'absolute', bottom: 12, left: 12, background: 'rgba(0,0,0,0.75)', padding: '6px 12px', borderRadius: '6px', fontSize: '0.78rem', color: '#ffffff' }}>
-                    🛰️ MSI Optical NDVI: Severe colluvium saturation &amp; slope scar detection
-                  </div>
-                </div>
-              )}
-
-              {satModalMode === 'compare' && (
-                <div style={{ width: '100%', height: '340px', background: '#090d16', borderRadius: '10px', overflow: 'hidden', position: 'relative' }}>
-                  <img
-                    src="https://images.unsplash.com/photo-1500382017468-9049fed747ef?w=1200&auto=format&fit=crop&q=80"
-                    alt="After"
-                    style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                  />
-                  <div
-                    style={{
-                      position: 'absolute',
-                      top: 0,
-                      left: 0,
-                      bottom: 0,
-                      width: `${satComparePos}%`,
-                      overflow: 'hidden',
-                      borderRight: '3px solid #38bdf8'
-                    }}
-                  >
-                    <img
-                      src="https://images.unsplash.com/photo-1507525428034-b723cf961d3e?w=1200&auto=format&fit=crop&q=80"
-                      alt="Before"
-                      style={{ width: '960px', height: '100%', objectFit: 'cover', maxWidth: 'none' }}
-                    />
-                  </div>
-                  <input
-                    type="range"
-                    min="0"
-                    max="100"
-                    value={satComparePos}
-                    onChange={(e) => setSatComparePos(e.target.value)}
-                    style={{ position: 'absolute', bottom: 16, left: '10%', width: '80%', zIndex: 10 }}
-                  />
-                </div>
-              )}
-            </div>
-
-            <div className="modal-card-footer">
-              <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontFamily: 'var(--font-main)', marginRight: 'auto' }} id="satModalFooterMeta">
-                ESA Copernicus Sentinel-1 SAR &amp; Sentinel-2 MSI Multi-Spectral Ingest • NER Landslide Monitoring
-              </div>
-              <button type="button" className="btn-action-secondary" onClick={() => setShowSatModal(false)}>Close Inspector</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* =====================================================================
-           PEOPLE EVACUATION STATUS POPUP MODAL (PROFESSIONAL & EMOJI-FREE)
-           ===================================================================== */}
-      {showPeopleModal && (() => {
-        const selectedAlertObj = dispatchedAlerts.find(a => a.refId === selectedHistoryAlertRef) || dispatchedAlerts[0] || {};
-        const alertZoneName = selectedAlertObj.zone || selectedAlertObj.zoneName || 'Shillong Urban & Ridge Slopes';
-        const alertRef = selectedAlertObj.refId || '#ALERT-2026-9041';
-
-        const alertResidents = citizenEvacuations;
-        const unresponsiveList = alertResidents.filter(c => c.status === 'unresponsive');
-        const acceptedList = alertResidents.filter(c => c.status === 'acknowledged' || c.status === 'evacuating');
+          return matchFilter && matchSearch;
+        });
 
         return (
-          <div className="modal-overlay-backdrop" style={{ display: 'flex', zIndex: 1100 }}>
-            <div className="modal-card-box" style={{ maxWidth: '840px', width: '95%', maxHeight: '88vh', display: 'flex', flexDirection: 'column' }}>
-              <div className="modal-card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
-                  <span style={{ fontSize: '1.05rem', fontWeight: 800 }}>
-                    Resident Response Audit &mdash; {alertRef}
-                  </span>
-                  <span style={{ fontSize: '0.76rem', background: 'rgba(255,255,255,0.15)', padding: '2px 8px', borderRadius: '4px', fontWeight: 600 }}>
-                    {alertZoneName}
-                  </span>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setShowPeopleModal(false)}
-                  style={{ background: 'none', border: 'none', color: '#ffffff', fontSize: '1.4rem', cursor: 'pointer', lineHeight: 1 }}
+          <main className="admin-page-view active">
+            <div className="page-content-wrapper">
+              
+              {/* Interactive Alarm & Evacuation KPI Summary Cards */}
+              <section className="overview-stats-row">
+                <div
+                  className={`stat-metric-card info clickable ${evacFilter === 'all' ? 'active-filter-card' : ''}`}
+                  onClick={() => setEvacFilter('all')}
+                  title="Click to view all monitored residents"
                 >
-                  &times;
-                </button>
+                  <div className="stat-label-row">
+                    <span>Targeted Residents</span>
+                    <span className="stat-tap-hint">View All</span>
+                  </div>
+                  <div className="stat-value">1,250</div>
+                  <div className="stat-subtext">Across 4 Risk Sectors ({citizenEvacuations.length} Active Roster)</div>
+                </div>
+
+                <div
+                  className={`stat-metric-card low clickable ${evacFilter === 'turned_off' ? 'active-filter-card' : ''}`}
+                  onClick={() => setEvacFilter('turned_off')}
+                  title="Click to view residents who have turned off their siren"
+                >
+                  <div className="stat-label-row">
+                    <span>Alarm Turned Off</span>
+                    <span className="status-pill low">{countTurnedOff} Live</span>
+                  </div>
+                  <div className="stat-value" style={{ color: '#16a34a' }}>1,100 (88%)</div>
+                  <div className="stat-subtext">Alarm Silenced • En Route to Shelter</div>
+                </div>
+
+                <div
+                  className={`stat-metric-card critical clickable ${evacFilter === 'not_turned_off' ? 'active-filter-card' : ''}`}
+                  onClick={() => setEvacFilter('not_turned_off')}
+                  title="Click to view residents whose alarms are still ringing (unresponsive)"
+                >
+                  <div className="stat-label-row">
+                    <span>Alarm NOT Turned Off</span>
+                    <span className="status-pill critical">{countNotTurnedOff} Urgent</span>
+                  </div>
+                  <div className="stat-value" style={{ color: '#dc2626' }}>150 (12%)</div>
+                  <div className="stat-subtext">Siren Active 5m+ • Physical Welfare Check Needed</div>
+                </div>
+
+                <div
+                  className={`stat-metric-card warning clickable ${evacFilter === 'dispatched' ? 'active-filter-card' : ''}`}
+                  onClick={() => setEvacFilter('dispatched')}
+                  title="Click to view residents with dispatched field rescue"
+                >
+                  <div className="stat-label-row">
+                    <span>Field Officers Dispatched</span>
+                    <span className="status-pill high">{countDispatched} Active</span>
+                  </div>
+                  <div className="stat-value" style={{ color: '#ea580c' }}>4 Units</div>
+                  <div className="stat-subtext">Physical Welfare Check in Progress</div>
+                </div>
+              </section>
+
+              {/* Roster Triage Toolbar */}
+              <div className="triage-toolbar">
+                <div className="triage-filters-group">
+                  <button
+                    type="button"
+                    className={`btn-triage-filter ${evacFilter === 'all' ? 'active' : ''}`}
+                    onClick={() => setEvacFilter('all')}
+                  >
+                    All Residents ({citizenEvacuations.length})
+                  </button>
+                  <button
+                    type="button"
+                    className={`btn-triage-filter critical ${evacFilter === 'not_turned_off' ? 'active' : ''}`}
+                    onClick={() => setEvacFilter('not_turned_off')}
+                  >
+                    Alarm NOT Turned Off ({countNotTurnedOff})
+                  </button>
+                  <button
+                    type="button"
+                    className={`btn-triage-filter low ${evacFilter === 'turned_off' ? 'active' : ''}`}
+                    onClick={() => setEvacFilter('turned_off')}
+                  >
+                    Alarm Turned Off ({countTurnedOff})
+                  </button>
+                  <button
+                    type="button"
+                    className={`btn-triage-filter warning ${evacFilter === 'dispatched' ? 'active' : ''}`}
+                    onClick={() => setEvacFilter('dispatched')}
+                  >
+                    Field Officer Dispatched ({countDispatched})
+                  </button>
+                </div>
+
+                <input
+                  type="text"
+                  className="input-report-search"
+                  placeholder="Search resident by name, household ID, sector, phone..."
+                  value={evacSearch}
+                  onChange={(e) => setEvacSearch(e.target.value)}
+                />
               </div>
 
-              <div className="modal-card-body" style={{ overflowY: 'auto', flex: 1, padding: '16px 20px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px', flexWrap: 'wrap', gap: '8px' }}>
-                  <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
-                    Live telemetry tracking of resident alert receipts and evacuation actions:
-                  </span>
-                  <div style={{ display: 'flex', gap: '8px' }}>
-                    <span style={{ fontSize: '0.75rem', background: '#fee2e2', color: '#991b1b', padding: '3px 10px', borderRadius: '4px', fontWeight: 700, border: '1px solid #fecaca' }}>
-                      {unresponsiveList.length} Unresponsive
-                    </span>
-                    <span style={{ fontSize: '0.75rem', background: '#dcfce7', color: '#166534', padding: '3px 10px', borderRadius: '4px', fontWeight: 700, border: '1px solid #bbf7d0' }}>
-                      {acceptedList.length} Acknowledged
-                    </span>
-                  </div>
-                </div>
+              {/* Resident Evacuation & Alarm Status Triage Table */}
+              <div className="report-table-container">
+                <table className="admin-triage-table">
+                  <thead>
+                    <tr>
+                      <th>Resident / Household</th>
+                      <th>Location Sector</th>
+                      <th>Alarm Status</th>
+                      <th>Designated Shelter &amp; Route</th>
+                      <th style={{ textAlign: 'right' }}>Welfare Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredEvacuations.length > 0 ? (
+                      filteredEvacuations.map(citizen => {
+                        const isNotTurnedOff = (citizen.alarmStatus === 'not_turned_off' || citizen.status === 'unresponsive') && !citizen.officerDispatched;
+                        const isTurnedOff = citizen.alarmStatus === 'turned_off' || citizen.status === 'evacuating' || citizen.status === 'acknowledged' || citizen.status === 'sheltered';
+                        const isDispatched = citizen.officerDispatched || citizen.alarmStatus === 'dispatched' || citizen.status === 'rescuing';
 
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '16px' }}>
-                  {/* UNRESPONSIVE / PENDING */}
-                  <div style={{ background: '#fff9f9', border: '1px solid #fecaca', borderRadius: '8px', padding: '14px' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-                      <h4 style={{ margin: 0, color: '#991b1b', fontSize: '0.9rem', fontWeight: 800 }}>
-                        Unresponsive / No Confirmation ({unresponsiveList.length})
-                      </h4>
-                      <span style={{ fontSize: '0.68rem', color: '#991b1b', fontWeight: 700, background: '#fee2e2', padding: '2px 6px', borderRadius: '3px' }}>
-                        Action Required
-                      </span>
-                    </div>
+                        return (
+                          <tr key={citizen.id} className={`triage-row-item ${isNotTurnedOff ? 'critical' : (isDispatched ? 'warning' : 'low')}`}>
+                            <td>
+                              <span className="triage-ref-badge">{citizen.id}</span>
+                              <strong style={{ display: 'block', marginTop: '3px', fontSize: '0.86rem' }}>{citizen.name}</strong>
+                              <div className="triage-phone-sub">{citizen.phone}</div>
+                            </td>
 
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                      {unresponsiveList.length === 0 ? (
-                        <div style={{ padding: '16px', textAlign: 'center', color: '#166534', fontSize: '0.82rem', fontWeight: 700, background: '#ffffff', borderRadius: '6px', border: '1px solid #bbf7d0' }}>
-                          All target residents have acknowledged the alert and silenced the alarm.
-                        </div>
-                      ) : (
-                        unresponsiveList.map((c) => (
-                          <div key={c.id} style={{ background: '#ffffff', border: '1px solid #fca5a5', borderRadius: '6px', padding: '10px 12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', boxShadow: '0 1px 2px rgba(0,0,0,0.03)' }}>
-                            <div>
-                              <div style={{ fontWeight: 800, fontSize: '0.88rem', color: '#1e293b' }}>{c.name}</div>
-                              <div style={{ fontSize: '0.74rem', color: '#64748b', marginTop: '2px' }}>Contact: {c.phone} &bull; Sector: {c.location}</div>
-                              <div style={{ fontSize: '0.7rem', color: '#b91c1c', fontWeight: 600, marginTop: '3px' }}>
-                                Status: Alarm Active (No citizen response)
-                              </div>
-                            </div>
-                            <div>
-                              {c.qrtDispatched ? (
-                                <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#1e40af', background: '#eff6ff', padding: '4px 8px', borderRadius: '4px', display: 'inline-flex', alignItems: 'center', gap: '4px', border: '1px solid #bfdbfe', whiteSpace: 'nowrap' }}>
-                                  Dispatched: {c.qrtTeam || 'SDRF Unit'}
-                                </span>
-                              ) : (
-                                <button
-                                  type="button"
-                                  onClick={() => handleDispatchPhysicalRescue(c)}
-                                  style={{
-                                    background: '#dc2626',
-                                    color: '#ffffff',
-                                    border: 'none',
-                                    borderRadius: '4px',
-                                    padding: '6px 12px',
-                                    fontSize: '0.74rem',
-                                    fontWeight: 700,
-                                    cursor: 'pointer',
-                                    whiteSpace: 'nowrap',
-                                    boxShadow: '0 1px 3px rgba(220, 38, 38, 0.25)'
-                                  }}
-                                >
-                                  Dispatch Field Officer
-                                </button>
+                            <td>
+                              <span className="triage-location-text">{citizen.location}</span>
+                              <div className="triage-coords-sub">{citizen.zone || 'Shillong Urban Ridge'}</div>
+                            </td>
+
+                            <td>
+                              {isNotTurnedOff && (
+                                <div>
+                                  <span className="status-pill critical" style={{ fontWeight: 800 }}>
+                                    ALARM NOT TURNED OFF
+                                  </span>
+                                  <div style={{ fontSize: '0.72rem', color: '#dc2626', fontWeight: 700, marginTop: '3px' }}>
+                                    Active for {citizen.ringingDuration || citizen.lastUpdate || '6m+'}
+                                  </div>
+                                </div>
                               )}
-                            </div>
-                          </div>
-                        ))
-                      )}
-                    </div>
-                  </div>
 
-                  {/* ACKNOWLEDGED / SAFE */}
-                  <div style={{ background: '#f6fdf9', border: '1px solid #bbf7d0', borderRadius: '8px', padding: '14px' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-                      <h4 style={{ margin: 0, color: '#166534', fontSize: '0.9rem', fontWeight: 800 }}>
-                        Acknowledged &amp; Evacuating ({acceptedList.length})
-                      </h4>
-                      <span style={{ fontSize: '0.68rem', color: '#166534', fontWeight: 700, background: '#dcfce7', padding: '2px 6px', borderRadius: '3px' }}>
-                        Safe Evacuation
-                      </span>
-                    </div>
+                              {isTurnedOff && (
+                                <div>
+                                  <span className="status-pill low" style={{ fontWeight: 800 }}>
+                                    ALARM TURNED OFF
+                                  </span>
+                                  <div style={{ fontSize: '0.72rem', color: '#16a34a', fontWeight: 600, marginTop: '3px' }}>
+                                    {citizen.actionText || 'Silenced & Evacuating'} ({citizen.ringingDuration || citizen.lastUpdate})
+                                  </div>
+                                </div>
+                              )}
 
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                      {acceptedList.length === 0 ? (
-                        <div style={{ padding: '16px', textAlign: 'center', color: '#64748b', fontSize: '0.82rem', background: '#ffffff', borderRadius: '6px', border: '1px solid #e2e8f0' }}>
-                          No resident acknowledgments logged yet.
-                        </div>
-                      ) : (
-                        acceptedList.map((c) => (
-                          <div key={c.id} style={{ background: '#ffffff', border: '1px solid #86efac', borderRadius: '6px', padding: '10px 12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', boxShadow: '0 1px 2px rgba(0,0,0,0.03)' }}>
-                            <div>
-                              <div style={{ fontWeight: 800, fontSize: '0.88rem', color: '#1e293b' }}>{c.name}</div>
-                              <div style={{ fontSize: '0.74rem', color: '#64748b', marginTop: '2px' }}>Contact: {c.phone} &bull; Sector: {c.location}</div>
-                              <div style={{ fontSize: '0.7rem', color: '#15803d', fontWeight: 600, marginTop: '3px' }}>
-                                Relief Site: {c.shelterTarget || 'Community Relief Center'}
+                              {isDispatched && (
+                                <div>
+                                  <span className="status-pill high" style={{ fontWeight: 800 }}>
+                                    FIELD OFFICER EN ROUTE
+                                  </span>
+                                  <div style={{ fontSize: '0.72rem', color: '#ea580c', fontWeight: 600, marginTop: '3px' }}>
+                                    {citizen.assignedOfficer || 'Field Officer Assigned'}
+                                  </div>
+                                </div>
+                              )}
+                            </td>
+
+                            <td>
+                              <strong style={{ fontSize: '0.82rem', color: 'var(--text-primary)' }}>
+                                {citizen.shelterTarget || 'Shillong Polo Ground Camp #1'}
+                              </strong>
+                              <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', marginTop: '2px' }}>
+                                Route: {citizen.evacRoute || 'Primary Sector Corridor (Open)'}
                               </div>
-                            </div>
-                            <div style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
-                              <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#166534', background: '#dcfce7', padding: '3px 8px', borderRadius: '3px', border: '1px solid #bbf7d0' }}>
-                                Confirmed
-                              </span>
-                              <div style={{ fontSize: '0.66rem', color: '#64748b', marginTop: '3px' }}>{c.lastUpdate || 'Just now'}</div>
-                            </div>
-                          </div>
-                        ))
-                      )}
-                    </div>
-                  </div>
-                </div>
+                            </td>
+
+                            <td style={{ textAlign: 'right' }}>
+                              <div className="triage-action-cell">
+                                {isNotTurnedOff ? (
+                                  <button
+                                    type="button"
+                                    className="btn-table-dispatch"
+                                    onClick={() => handleDispatchPhysicalRescue(citizen)}
+                                    title="Dispatch field officer for immediate welfare rescue"
+                                  >
+                                    Dispatch Field Officer
+                                  </button>
+                                ) : isDispatched ? (
+                                  <span className="status-resolved-tag" style={{ color: '#ea580c', background: '#fff7ed', borderColor: '#fed7aa' }}>
+                                    {citizen.assignedOfficer || 'Officer'} En Route
+                                  </span>
+                                ) : (
+                                  <span className="status-resolved-tag">
+                                    Safe / Evacuating
+                                  </span>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })
+                    ) : (
+                      <tr>
+                        <td colSpan="5" style={{ textAlign: 'center', padding: '24px', color: 'var(--text-muted)' }}>
+                          No residents match the selected filter criteria.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
               </div>
 
-              <div className="modal-card-footer" style={{ display: 'flex', justifyContent: 'flex-end', padding: '12px 20px' }}>
-                <button
-                  type="button"
-                  className="btn-action-secondary"
-                  onClick={() => setShowPeopleModal(false)}
-                >
-                  Close
-                </button>
+              {/* Dispatched Broadcasts Log Table */}
+              <div className="history-table-panel" style={{ marginTop: '24px' }}>
+                <div className="panel-section-title">
+                  <span>Emergency Broadcast Dissemination History</span>
+                </div>
+
+                <table className="admin-history-table">
+                  <thead>
+                    <tr>
+                      <th>Ref ID</th>
+                      <th>Target Zone</th>
+                      <th>Severity</th>
+                      <th>Dissemination Channels</th>
+                      <th>Timestamp</th>
+                      <th>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredHistory.map((item, idx) => {
+                      const sev = (item.severity || 'high').toLowerCase();
+                      return (
+                        <tr key={idx}>
+                          <td><strong>{item.refId}</strong></td>
+                          <td>{item.zone || item.zoneName || 'General Monitored Sector'}</td>
+                          <td>
+                            <span className={`status-pill ${sev === 'critical' ? 'critical' : 'high'}`}>
+                              {sev.toUpperCase()}
+                            </span>
+                          </td>
+                          <td>{item.channels || 'Multi-Channel Push & Siren'}</td>
+                          <td>{item.time || item.timestamp || 'Recorded'}</td>
+                          <td><span className="status-live-tag">Active</span></td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
               </div>
+
             </div>
-          </div>
+          </main>
         );
       })()}
 
-      {/* Operational Toast Notification */}
-      <div className={`operational-toast ${showToast ? 'show' : ''}`} id="operationalToast">
-        {toastMessage}
-      </div>
+      {/* =====================================================================
+           INCIDENT CASE DOSSIER FULL DETAILS MODAL
+           ===================================================================== */}
+      {selectedCaseModal && (
+        <div className="admin-modal-backdrop" onClick={() => setSelectedCaseModal(null)}>
+          <div className="admin-case-dossier-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="dossier-header">
+              <div className="dossier-title-group">
+                <span className="dossier-ref-tag">{selectedCaseModal.id}</span>
+                <span className={`status-pill ${selectedCaseModal.severity === 'critical' ? 'critical' : 'high'}`}>
+                  {selectedCaseModal.severity === 'critical' ? 'CRITICAL PRIORITY' : 'ELEVATED WARNING'}
+                </span>
+                <span className={`status-pill ${selectedCaseModal.status === 'resolved' ? 'low' : (selectedCaseModal.status === 'dispatched' ? 'high' : 'critical')}`}>
+                  {selectedCaseModal.status === 'resolved' ? 'RESOLVED' : (selectedCaseModal.status === 'dispatched' ? 'FIELD OFFICER DISPATCHED' : 'PENDING INSPECTION')}
+                </span>
+              </div>
+              <button
+                type="button"
+                className="btn-modal-close-icon"
+                onClick={() => setSelectedCaseModal(null)}
+                title="Close Dossier"
+              >
+                &times;
+              </button>
+            </div>
 
-      {/* Connect Arduino Device button at bottom */}
-      <button
-        type="button"
-        id="connectArduinoBtn"
-        onClick={handleConnectArduino}
-        className="btn-action-secondary"
-        style={{ position: 'fixed', bottom: '16px', right: '16px', zIndex: 90, background: arduinoConnected ? '#16a34a' : 'var(--bg-surface)', color: arduinoConnected ? '#fff' : 'var(--text-primary)', border: '1px solid var(--border-medium)', borderRadius: '8px', padding: '6px 12px', fontSize: '0.78rem', cursor: 'pointer', boxShadow: '0 2px 8px rgba(0,0,0,0.1)' }}
-      >
-        🔌 {arduinoConnected ? 'Arduino Siren Active' : 'Connect LED Alert Device'}
-      </button>
+            <div className="dossier-body">
+              {/* Incident Summary Banner */}
+              <div className="dossier-summary-card">
+                <div className="dossier-summary-label">Reported Hazard Classification</div>
+                <div className="dossier-summary-title">{selectedCaseModal.category || selectedCaseModal.type || 'Ground Instability / Fissure'}</div>
+                <div className="dossier-summary-desc">{selectedCaseModal.description || selectedCaseModal.desc}</div>
+                {selectedCaseModal.tags && (
+                  <div className="dossier-tags-row">
+                    {selectedCaseModal.tags.map((tg, i) => (
+                      <span key={i} className="dossier-tag-pill">#{tg}</span>
+                    ))}
+                  </div>
+                )}
+              </div>
 
+              <div className="dossier-grid-2col">
+                {/* Column 1: Reporter & Geospatial Info */}
+                <div className="dossier-section-box">
+                  <h4 className="dossier-section-heading">Reporter &amp; Location Details</h4>
+                  
+                  <div className="dossier-field-row">
+                    <span className="dossier-field-label">Citizen Reporter:</span>
+                    <span className="dossier-field-val"><strong>{selectedCaseModal.reporter}</strong></span>
+                  </div>
+
+                  <div className="dossier-field-row">
+                    <span className="dossier-field-label">Contact Number:</span>
+                    <span className="dossier-field-val" style={{ fontFamily: 'monospace' }}>
+                      {selectedCaseModal.contact || selectedCaseModal.phone || 'N/A'}
+                    </span>
+                  </div>
+
+                  <div className="dossier-field-row">
+                    <span className="dossier-field-label">Logged Timestamp:</span>
+                    <span className="dossier-field-val">{selectedCaseModal.timestamp || selectedCaseModal.time || 'Recent'}</span>
+                  </div>
+
+                  <div className="dossier-field-row">
+                    <span className="dossier-field-label">Location Sector:</span>
+                    <span className="dossier-field-val">{selectedCaseModal.location}</span>
+                  </div>
+
+                  <div className="dossier-field-row">
+                    <span className="dossier-field-label">GPS Coordinates:</span>
+                    <span className="dossier-field-val" style={{ color: selectedCaseModal.hasGeotag ? '#16a34a' : '#d97706', fontWeight: 700 }}>
+                      {selectedCaseModal.coordsText || (selectedCaseModal.coords ? `${selectedCaseModal.coords[0]}° N, ${selectedCaseModal.coords[1]}° E` : 'Sector Reference (No GPS Lock)')}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Column 2: Field Officer & Assessment */}
+                <div className="dossier-section-box">
+                  <h4 className="dossier-section-heading">Field Officer Verification</h4>
+                  
+                  <div className="dossier-field-row">
+                    <span className="dossier-field-label">Assigned Officer:</span>
+                    <span className="dossier-field-val">
+                      <strong>{selectedCaseModal.patrolOfficer || selectedCaseModal.dispatchedOfficer || (selectedCaseModal.status === 'dispatched' ? 'Field Officer Unit 2' : 'Unassigned')}</strong>
+                    </span>
+                  </div>
+
+                  <div className="dossier-field-row">
+                    <span className="dossier-field-label">Inspection Status:</span>
+                    <span className="dossier-field-val">
+                      {selectedCaseModal.statusText || (selectedCaseModal.status === 'resolved' ? 'Resolved & Cleared' : (selectedCaseModal.status === 'dispatched' ? 'Field Officer En Route' : 'Awaiting Field Dispatch'))}
+                    </span>
+                  </div>
+
+                  <div className="dossier-field-row">
+                    <span className="dossier-field-label">Inspection Notes:</span>
+                    <span className="dossier-field-val" style={{ fontStyle: selectedCaseModal.patrolNotes ? 'normal' : 'italic', color: selectedCaseModal.patrolNotes ? 'var(--text-primary)' : 'var(--text-muted)' }}>
+                      {selectedCaseModal.patrolNotes || 'No preliminary patrol notes logged. Awaiting field officer arrival.'}
+                    </span>
+                  </div>
+
+                  <div className="dossier-field-row">
+                    <span className="dossier-field-label">Photo Observation:</span>
+                    <span className="dossier-field-val" style={{ color: '#2563eb' }}>
+                      {selectedCaseModal.photo || 'Visual evidence captured on citizen submission'}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="dossier-footer">
+              <div className="dossier-footer-left">
+                <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                  State Disaster Response Field Management Protocol
+                </span>
+              </div>
+              <div className="dossier-footer-right">
+                {selectedCaseModal.status !== 'resolved' && (
+                  <>
+                    <button
+                      type="button"
+                      className="btn-dossier-dispatch"
+                      onClick={() => {
+                        handleDispatchFieldOfficer(selectedCaseModal.id);
+                        setSelectedCaseModal(prev => prev ? {
+                          ...prev,
+                          status: 'dispatched',
+                          statusText: 'Field Officer En Route',
+                          patrolOfficer: prev.patrolOfficer && prev.patrolOfficer !== 'Unassigned' ? prev.patrolOfficer : 'Field Officer Unit 2',
+                          dispatchedOfficer: 'Field Officer Unit 2'
+                        } : null);
+                      }}
+                    >
+                      Dispatch Field Officer
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-dossier-resolve"
+                      onClick={() => {
+                        handleResolveReport(selectedCaseModal.id);
+                        setSelectedCaseModal(prev => prev ? { ...prev, status: 'resolved', statusText: 'Resolved & Clear' } : null);
+                      }}
+                    >
+                      Mark Resolved
+                    </button>
+                  </>
+                )}
+                <button
+                  type="button"
+                  className="btn-dossier-close"
+                  onClick={() => setSelectedCaseModal(null)}
+                >
+                  Close Dossier
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* =====================================================================
+           HARDWARE DIAGNOSTIC & TELEMETRY DOSSIER MODAL
+           ===================================================================== */}
+      {selectedHardwareModal && (
+        <div className="admin-modal-backdrop" onClick={() => setSelectedHardwareModal(null)}>
+          <div className="admin-dossier-modal hardware-dossier-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="dossier-header">
+              <div className="dossier-title-group">
+                <div className="dossier-id-badge" style={{ background: '#f8fafc', borderColor: '#cbd5e1' }}>
+                  <span style={{ color: '#0f172a', fontWeight: 800 }}>{selectedHardwareModal.id}</span>
+                </div>
+                <div>
+                  <h3 className="dossier-title">{selectedHardwareModal.name}</h3>
+                  <div className="dossier-subtitle">
+                    Model: {selectedHardwareModal.model} • Deployed in {zoneData.name.split(' (')[0]}
+                  </div>
+                </div>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span className={`status-pill ${selectedHardwareModal.status === 'critical' ? 'critical' : selectedHardwareModal.status === 'warning' ? 'high' : 'low'}`}>
+                  {selectedHardwareModal.statusText}
+                </span>
+                <button
+                  type="button"
+                  className="btn-modal-close-icon"
+                  onClick={() => setSelectedHardwareModal(null)}
+                >
+                  ✕
+                </button>
+              </div>
+            </div>
+
+            <div className="dossier-body">
+              {/* Top Telemetry KPI Bar */}
+              <div className="diag-kpi-bar">
+                <div className="diag-kpi-item">
+                  <span className="lbl">Primary Sensor Telemetry</span>
+                  <span className="val" style={{ color: selectedHardwareModal.status === 'critical' ? '#dc2626' : selectedHardwareModal.status === 'warning' ? '#ea580c' : '#16a34a' }}>
+                    {selectedHardwareModal.primaryMetric}
+                  </span>
+                </div>
+                <div className="diag-kpi-item">
+                  <span className="lbl">Power / Voltage</span>
+                  <span className="val">{selectedHardwareModal.battery}</span>
+                </div>
+                <div className="diag-kpi-item">
+                  <span className="lbl">RF Link RSSI</span>
+                  <span className="val">{selectedHardwareModal.signal}</span>
+                </div>
+                <div className="diag-kpi-item">
+                  <span className="lbl">Packet Loss</span>
+                  <span className="val" style={{ color: '#16a34a' }}>{selectedHardwareModal.packetLoss}</span>
+                </div>
+                <div className="diag-kpi-item">
+                  <span className="lbl">Last Uplink Ping</span>
+                  <span className="val">{selectedHardwareModal.lastPing}</span>
+                </div>
+              </div>
+
+              {/* 2-Column Detailed Telemetry Grid */}
+              <div className="dossier-grid-2col" style={{ marginTop: '16px' }}>
+                {/* Column 1: Raw Register Data */}
+                <div className="dossier-card">
+                  <h4 className="dossier-card-title">Live Sensor Raw Registers &amp; Sub-Metrics</h4>
+                  <div className="dossier-field-list">
+                    {selectedHardwareModal.rawValues && Object.entries(selectedHardwareModal.rawValues).map(([key, val]) => (
+                      <div key={key} className="dossier-field-row">
+                        <span className="dossier-field-label" style={{ textTransform: 'capitalize' }}>
+                          {key.replace(/([A-Z])/g, ' $1').replace(/_/g, '.')}:
+                        </span>
+                        <span className="dossier-field-val" style={{ fontWeight: 700, color: '#0f172a' }}>
+                          {val}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Column 2: Thresholds, Network & Calibration */}
+                <div className="dossier-card">
+                  <h4 className="dossier-card-title">Calibration, Thresholds &amp; Node Health</h4>
+                  <div className="dossier-field-list">
+                    <div className="dossier-field-row">
+                      <span className="dossier-field-label">Safety Threshold:</span>
+                      <span className="dossier-field-val" style={{ color: selectedHardwareModal.status === 'critical' ? '#dc2626' : '#ea580c', fontWeight: 700 }}>
+                        {selectedHardwareModal.threshold}
+                      </span>
+                    </div>
+                    <div className="dossier-field-row">
+                      <span className="dossier-field-label">Sensor Category:</span>
+                      <span className="dossier-field-val">{selectedHardwareModal.typeLabel}</span>
+                    </div>
+                    <div className="dossier-field-row">
+                      <span className="dossier-field-label">Deployment Zone:</span>
+                      <span className="dossier-field-val">{zoneData.name}</span>
+                    </div>
+                    <div className="dossier-field-row">
+                      <span className="dossier-field-label">Coordinates:</span>
+                      <span className="dossier-field-val">{zoneData.coords}</span>
+                    </div>
+                    <div className="dossier-field-row">
+                      <span className="dossier-field-label">Firmware Protocol:</span>
+                      <span className="dossier-field-val">Modbus-RTU / LoRaWAN v1.0.4 SEC-V2</span>
+                    </div>
+                    <div className="dossier-field-row">
+                      <span className="dossier-field-label">Diagnostics Self-Check:</span>
+                      <span className="dossier-field-val" style={{ color: '#16a34a', fontWeight: 700 }}>
+                        PASS (Zero Drift: 0.02%)
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="dossier-footer">
+              <div className="dossier-footer-left">
+                <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                  Hardware Telemetry Gateway • High-Frequency Polling Active (5s Loop)
+                </span>
+              </div>
+              <div className="dossier-footer-right">
+                <button
+                  type="button"
+                  className="btn-diag-action"
+                  onClick={() => {
+                    showOperationalToast(`Uplink ping sent to ${selectedHardwareModal.id}: Response 14ms (Healthy)`);
+                  }}
+                >
+                  Ping Node
+                </button>
+                <button
+                  type="button"
+                  className="btn-diag-action"
+                  onClick={() => {
+                    showOperationalToast(`Zero-offset calibration routine completed for ${selectedHardwareModal.id}`);
+                  }}
+                >
+                  Zero Calibrate
+                </button>
+                <button
+                  type="button"
+                  className="btn-diag-action"
+                  onClick={() => {
+                    showOperationalToast(`Diagnostic self-test completed for ${selectedHardwareModal.id}: All registers nominal`);
+                  }}
+                >
+                  Run Self-Test
+                </button>
+                <button
+                  type="button"
+                  className="btn-dossier-close"
+                  onClick={() => setSelectedHardwareModal(null)}
+                >
+                  Close Dossier
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* =====================================================================
+           DANGER ZONE HAZARD DOSSIER POPUP MODAL
+           ===================================================================== */}
+      {selectedZoneModal && (
+        <div className="admin-modal-backdrop" onClick={() => setSelectedZoneModal(null)}>
+          <div className="admin-dossier-modal zone-dossier-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="dossier-header">
+              <div className="dossier-title-group">
+                <div className="dossier-id-badge" style={{ background: '#fef2f2', borderColor: '#fecaca' }}>
+                  <span style={{ color: '#dc2626', fontWeight: 800 }}>HAZARD SECTOR</span>
+                </div>
+                <div>
+                  <h3 className="dossier-title">{selectedZoneModal.name}</h3>
+                  <div className="dossier-subtitle">
+                    {selectedZoneModal.coords}
+                  </div>
+                </div>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span className={`status-pill ${selectedZoneModal.severity === 'critical' ? 'critical' : 'high'}`}>
+                  {selectedZoneModal.finalRisk} Risk • {selectedZoneModal.severityText || 'Active Alert'}
+                </span>
+                <button
+                  type="button"
+                  className="btn-modal-close-icon"
+                  onClick={() => setSelectedZoneModal(null)}
+                >
+                  ✕
+                </button>
+              </div>
+            </div>
+
+            <div className="dossier-body">
+              {/* Top Telemetry KPI Bar */}
+              <div className="diag-kpi-bar">
+                <div className="diag-kpi-item">
+                  <span className="lbl">Hazard Susceptibility</span>
+                  <span className="val" style={{ color: '#dc2626' }}>{selectedZoneModal.finalRisk}</span>
+                </div>
+                <div className="diag-kpi-item">
+                  <span className="lbl">Model Confidence</span>
+                  <span className="val" style={{ color: '#2563eb' }}>{selectedZoneModal.confidenceScore || '93.8%'}</span>
+                </div>
+                <div className="diag-kpi-item">
+                  <span className="lbl">Est. Risk Window</span>
+                  <span className="val" style={{ color: '#ea580c' }}>{selectedZoneModal.riskWindow || '~45 min'}</span>
+                </div>
+                <div className="diag-kpi-item">
+                  <span className="lbl">InSAR Creep Rate</span>
+                  <span className="val" style={{ color: '#7c3aed' }}>{selectedZoneModal.satellite?.insarVelocity || '+15.8 mm/wk'}</span>
+                </div>
+                <div className="diag-kpi-item">
+                  <span className="lbl">Active Sensors</span>
+                  <span className="val" style={{ color: '#16a34a' }}>{(selectedZoneModal.hardwareNodes || []).length || 4} Deployed Nodes</span>
+                </div>
+              </div>
+
+              {/* 2-Column Detailed Hazard Dossier */}
+              <div className="dossier-grid-2col" style={{ marginTop: '16px' }}>
+                {/* Column 1: Landslide Trigger Factors */}
+                <div className="dossier-card">
+                  <h4 className="dossier-card-title">Contributing Landslide Factors &amp; Telemetry</h4>
+                  <div className="dossier-field-list">
+                    {(selectedZoneModal.factors || []).map((factor, idx) => (
+                      <div key={idx} className="dossier-field-row">
+                        <span className="dossier-field-label">{factor.label}:</span>
+                        <span className="dossier-field-val" style={{ fontWeight: 700, color: '#0f172a' }}>
+                          {factor.value}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Column 2: Evacuation & Critical Corridors */}
+                <div className="dossier-card">
+                  <h4 className="dossier-card-title">Evacuation Shelter &amp; Road Corridors</h4>
+                  <div className="dossier-field-list">
+                    <div className="dossier-field-row">
+                      <span className="dossier-field-label">Designated Shelter:</span>
+                      <span className="dossier-field-val" style={{ color: '#2563eb', fontWeight: 700 }}>
+                        {selectedZoneModal.shelter}
+                      </span>
+                    </div>
+                    <div className="dossier-field-row">
+                      <span className="dossier-field-label">At-Risk Villages:</span>
+                      <span className="dossier-field-val">
+                        {(selectedZoneModal.villages || []).map(v => v.name).join(', ') || 'Ridge Settlement Sector'}
+                      </span>
+                    </div>
+                    <div className="dossier-field-row">
+                      <span className="dossier-field-label">Road Network Status:</span>
+                      <span className="dossier-field-val" style={{ color: '#dc2626', fontWeight: 700 }}>
+                        {(selectedZoneModal.roads || []).filter(r => r.status === 'blocked').length} Blocked • {(selectedZoneModal.roads || []).filter(r => r.status === 'restricted').length} Restricted
+                      </span>
+                    </div>
+                    <div className="dossier-field-row">
+                      <span className="dossier-field-label">Cascading Hazard:</span>
+                      <span className="dossier-field-val" style={{ color: '#ea580c' }}>
+                        {selectedZoneModal.flags?.cascadingFlood?.badge || 'Slope Debris Flow Encroachment'}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="dossier-footer">
+              <div className="dossier-footer-left">
+                <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                  District Disaster Management Authority (DDMA) • Sector Risk Assessment
+                </span>
+              </div>
+              <div className="dossier-footer-right">
+                <button
+                  type="button"
+                  className="btn-dossier-dispatch"
+                  onClick={() => {
+                    const key = selectedZoneModal.key || Object.keys(ZONES_DATABASE).find(k => ZONES_DATABASE[k].name === selectedZoneModal.name) || 'shillong-meghalaya';
+                    setSelectedZoneKey(key);
+                    setActivePage('page2');
+                    setSelectedZoneModal(null);
+                  }}
+                >
+                  Inspect Tactical Sector →
+                </button>
+                <button
+                  type="button"
+                  className="btn-dossier-resolve"
+                  onClick={() => {
+                    const key = selectedZoneModal.key || Object.keys(ZONES_DATABASE).find(k => ZONES_DATABASE[k].name === selectedZoneModal.name) || 'shillong-meghalaya';
+                    setSelectedZoneKey(key);
+                    setSelectedZoneModal(null);
+                    setShowConfirmModal(true);
+                  }}
+                >
+                  Broadcast Evacuation Alert
+                </button>
+                <button
+                  type="button"
+                  className="btn-dossier-close"
+                  onClick={() => setSelectedZoneModal(null)}
+                >
+                  Close Dossier
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* =====================================================================
+           BLOCKED ROAD & BYPASS DOSSIER POPUP MODAL
+           ===================================================================== */}
+      {selectedRoadModal && (
+        <div className="admin-modal-backdrop" onClick={() => setSelectedRoadModal(null)}>
+          <div className="admin-dossier-modal road-dossier-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="dossier-header">
+              <div className="dossier-title-group">
+                <div className="dossier-id-badge" style={{ background: selectedRoadModal.status === 'blocked' ? '#fef2f2' : '#fff7ed', borderColor: selectedRoadModal.status === 'blocked' ? '#fecaca' : '#fed7aa' }}>
+                  <span style={{ color: selectedRoadModal.status === 'blocked' ? '#dc2626' : '#ea580c', fontWeight: 800 }}>ROAD CORRIDOR</span>
+                </div>
+                <div>
+                  <h3 className="dossier-title">{selectedRoadModal.name}</h3>
+                  <div className="dossier-subtitle">
+                    Designated Bypass: {selectedRoadModal.bypass} ({selectedRoadModal.delay})
+                  </div>
+                </div>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span className={`status-pill ${selectedRoadModal.status === 'blocked' ? 'critical' : (selectedRoadModal.status === 'restricted' ? 'high' : 'low')}`}>
+                  {selectedRoadModal.status.toUpperCase()} • {selectedRoadModal.statusText || 'Active Incident'}
+                </span>
+                <button
+                  type="button"
+                  className="btn-modal-close-icon"
+                  onClick={() => setSelectedRoadModal(null)}
+                >
+                  ✕
+                </button>
+              </div>
+            </div>
+
+            <div className="dossier-body">
+              {/* Top Telemetry KPI Bar */}
+              <div className="diag-kpi-bar">
+                <div className="diag-kpi-item">
+                  <span className="lbl">Corridor Status</span>
+                  <span className="val" style={{ color: selectedRoadModal.status === 'blocked' ? '#dc2626' : '#ea580c' }}>
+                    {selectedRoadModal.status.toUpperCase()}
+                  </span>
+                </div>
+                <div className="diag-kpi-item">
+                  <span className="lbl">Active Bypass Route</span>
+                  <span className="val" style={{ color: '#2563eb' }}>{selectedRoadModal.bypass}</span>
+                </div>
+                <div className="diag-kpi-item">
+                  <span className="lbl">Transit Delay</span>
+                  <span className="val" style={{ color: '#dc2626' }}>{selectedRoadModal.delay}</span>
+                </div>
+                <div className="diag-kpi-item">
+                  <span className="lbl">Traffic Patrol Assigned</span>
+                  <span className="val" style={{ color: '#16a34a' }}>SDRF Traffic Unit #4</span>
+                </div>
+              </div>
+
+              {/* 2-Column Detailed Road Information */}
+              <div className="dossier-grid-2col" style={{ marginTop: '16px' }}>
+                {/* Column 1: Hazard Cause & Road Blockade Summary */}
+                <div className="dossier-card">
+                  <h4 className="dossier-card-title">Hazard Assessment &amp; Obstruction Summary</h4>
+                  <div className="dossier-field-list">
+                    <div className="dossier-field-row">
+                      <span className="dossier-field-label">Obstruction Cause:</span>
+                      <span className="dossier-field-val" style={{ color: '#dc2626', fontWeight: 700 }}>
+                        {selectedRoadModal.status === 'blocked' ? 'Colluvial slope failure & 120m mudflow debris across carriageway' : 'Slush and gravel runoff with active slope creep'}
+                      </span>
+                    </div>
+                    <div className="dossier-field-row">
+                      <span className="dossier-field-label">Affected Section:</span>
+                      <span className="dossier-field-val">Km 42.6 to Km 43.1 (Upper Ridge Scarp)</span>
+                    </div>
+                    <div className="dossier-field-row">
+                      <span className="dossier-field-label">Clearance Operations:</span>
+                      <span className="dossier-field-val" style={{ color: '#2563eb', fontWeight: 700 }}>
+                        2 JCB Excavators + SDRF Clearing Crew En Route
+                      </span>
+                    </div>
+                    <div className="dossier-field-row">
+                      <span className="dossier-field-label">Public Traffic Advisory:</span>
+                      <span className="dossier-field-val">
+                        Civilian transit halted on main corridor. All vehicles diverted via designated bypass.
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Column 2: Bypass Navigation & Detour Guidance */}
+                <div className="dossier-card">
+                  <h4 className="dossier-card-title">Designated Bypass Route &amp; Navigational Guidance</h4>
+                  <div className="dossier-field-list">
+                    <div className="dossier-field-row">
+                      <span className="dossier-field-label">Bypass Name:</span>
+                      <span className="dossier-field-val" style={{ fontWeight: 700, color: '#0f172a' }}>
+                        {selectedRoadModal.bypass}
+                      </span>
+                    </div>
+                    <div className="dossier-field-row">
+                      <span className="dossier-field-label">Route Condition:</span>
+                      <span className="dossier-field-val" style={{ color: '#16a34a', fontWeight: 700 }}>
+                        Paved 2-lane road • Monitored &amp; Clear
+                      </span>
+                    </div>
+                    <div className="dossier-field-row">
+                      <span className="dossier-field-label">Detour Distance:</span>
+                      <span className="dossier-field-val">{selectedRoadModal.delay}</span>
+                    </div>
+                    <div className="dossier-field-row">
+                      <span className="dossier-field-label">Heavy Vehicle Restrictions:</span>
+                      <span className="dossier-field-val">Multi-axle trucks restricted; LMVs &amp; Ambulances allowed</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="dossier-footer">
+              <div className="dossier-footer-left">
+                <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                  Traffic &amp; Corridor Management Protocol • Live GPS Tracking
+                </span>
+              </div>
+              <div className="dossier-footer-right">
+                <button
+                  type="button"
+                  className="btn-dossier-dispatch"
+                  onClick={() => {
+                    setActivePage('page2');
+                    setSelectedRoadModal(null);
+                  }}
+                >
+                  View on Tactical Sector Map →
+                </button>
+                <button
+                  type="button"
+                  className="btn-dossier-close"
+                  onClick={() => setSelectedRoadModal(null)}
+                >
+                  Close Dossier
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* =====================================================================
+           EMERGENCY BROADCAST CONFIRMATION MODAL
+           ===================================================================== */}
+      {showConfirmModal && (
+        <div className="admin-modal-backdrop" onClick={() => setShowConfirmModal(false)}>
+          <div className="admin-modal-card" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header-danger">
+              <h3>Confirm Emergency Evacuation Broadcast</h3>
+            </div>
+
+            <div className="modal-body-content">
+              <p>You are about to issue a <strong>RED LEVEL EVACUATION ALERT</strong> for:</p>
+              <div className="modal-target-box">
+                <strong>{zoneData.name}</strong>
+                <div>Designated Shelter: <strong>{zoneData.shelter}</strong></div>
+              </div>
+              <p style={{ fontSize: '0.8rem', color: '#64748b', marginTop: '8px' }}>
+                This will trigger multi-channel App Push notifications, Emergency SMS, and activate the synced physical siren.
+              </p>
+            </div>
+
+            <div className="modal-actions-row">
+              <button
+                type="button"
+                className="btn-modal-cancel"
+                onClick={() => setShowConfirmModal(false)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn-modal-dispatch"
+                onClick={confirmAndDispatchAlert}
+              >
+                Confirm &amp; Dispatch Alert
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Operational Toast */}
+      {showToast && (
+        <div className="admin-toast-pill">
+          <span>{toastMessage}</span>
+        </div>
+      )}
     </div>
   );
 }
