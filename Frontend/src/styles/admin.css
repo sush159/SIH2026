@@ -652,6 +652,25 @@ button, input, select, textarea, code, kbd, samp, pre {
   min-height: 560px;
   flex: 1;
   z-index: 1;
+  position: relative;
+}
+
+.maplibregl-map {
+  width: 100% !important;
+  height: 100% !important;
+  font-family: inherit;
+  position: relative !important;
+}
+
+.maplibregl-canvas-container {
+  width: 100% !important;
+  height: 100% !important;
+}
+
+.maplibregl-canvas {
+  width: 100% !important;
+  height: 100% !important;
+  outline: none;
 }
 
 .heatmap-legend-badge {

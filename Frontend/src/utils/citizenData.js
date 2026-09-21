@@ -345,7 +345,15 @@ export const ROADS_DATA = [
       status: "Open",
       distance: "12.4 km",
       extraTime: "+15 mins",
+      duration: "18 mins",
+      origin: "Shillong Urban Ridge / Police Bazar",
+      originHi: "शिलांग कटक / पुलिस बाज़ार",
+      originCoords: [25.5680, 91.8820],
+      destination: "Shillong Municipal Relief Center #1 (Polo Ground)",
+      destinationHi: "शिलांग नगर राहत केंद्र #1 (पोलो ग्राउंड)",
+      destinationCoords: [25.5800, 91.8965],
       notes: "Reinforced ridge bypass away from active slope drainage channels",
+      safetyAdvisory: "100% Clear of slope mudflow • Continuous Earth Engine Radar Monitoring",
       coords: [
         [25.5680, 91.8820],
         [25.5660, 91.8850],
@@ -354,6 +362,58 @@ export const ROADS_DATA = [
         [25.5710, 91.8960],
         [25.5760, 91.8980],
         [25.5800, 91.8965]
+      ],
+      steps: [
+        {
+          id: 1,
+          icon: "straight",
+          instruction: "Head North on GS Road toward Ridge Checkpoint",
+          instructionHi: "जीएस रोड पर उत्तर की ओर कटक चेकपॉइंट की तरफ बढ़ें",
+          distance: "600 m",
+          time: "2 min",
+          coords: [25.5680, 91.8820],
+          advisory: "Proceed at standard speed; keep headlights on in heavy rain."
+        },
+        {
+          id: 2,
+          icon: "turn-right",
+          instruction: "Turn sharp right onto Upper Helang Ridge Link (Bypass entrance)",
+          instructionHi: "अपर हेलंग कटक लिंक (बाईपास प्रवेश) पर तीव्र दाएं मुड़ें",
+          distance: "1.8 km",
+          time: "4 min",
+          coords: [25.5660, 91.8850],
+          advisory: "Elevated bedrock road completely clear of slope mudflow."
+        },
+        {
+          id: 3,
+          icon: "straight",
+          instruction: "Continue along Shillong Peak Overlook Highway (NH-106 Link)",
+          instructionHi: "शिलांग पीक ओवरलुक हाईवे पर 5.2 किमी सीधे चलें",
+          distance: "5.2 km",
+          time: "6 min",
+          coords: [25.5670, 91.8930],
+          advisory: "Monitored by live InSAR sensor SH-101 (Ground 100% stable)."
+        },
+        {
+          id: 4,
+          icon: "turn-left",
+          instruction: "Turn left onto Municipal Access Way toward Polo Ground",
+          instructionHi: "पोलो ग्राउंड की ओर म्युनिसिपल मार्ग पर बाएं मुड़ें",
+          distance: "3.4 km",
+          time: "4 min",
+          coords: [25.5760, 91.8980],
+          advisory: "Dual asphalt lanes reinforced with active storm drainage culverts."
+        },
+        {
+          id: 5,
+          icon: "finish",
+          instruction: "Arrive at Shillong Municipal Relief Center #1 (Designated Safe Shelter)",
+          instructionHi: "शिलांग नगर राहत केंद्र #1 (सुरक्षित आश्रय स्थल) पर पहुंचें",
+          distance: "1.4 km",
+          time: "2 min",
+          coords: [25.5800, 91.8965],
+          advisory: "Medical triage, emergency supplies, and police escort post active."
+        }
       ]
     }
   },
@@ -381,13 +441,63 @@ export const ROADS_DATA = [
       status: "Open",
       distance: "9.8 km",
       extraTime: "+20 mins",
+      duration: "16 mins",
+      origin: "Cherrapunji Market Square",
+      originHi: "चेरापूंजी मार्केट स्क्वायर",
+      originCoords: [25.2600, 91.7200],
+      destination: "Cherrapunji Sohra Community Safe Camp (Shelter #2)",
+      destinationHi: "चेरापूंजी सोहरा सुरक्षित समुदाय आश्रय केंद्र #2",
+      destinationCoords: [25.2760, 91.7360],
       notes: "Elevated bedrock ridge transit clear of drainage gullies",
+      safetyAdvisory: "High bedrock foundation evades gorge sheetwash runoff",
       coords: [
         [25.2600, 91.7200],
         [25.2620, 91.7250],
         [25.2660, 91.7290],
         [25.2700, 91.7340],
         [25.2760, 91.7360]
+      ],
+      steps: [
+        {
+          id: 1,
+          icon: "straight",
+          instruction: "Head Southeast from Cherrapunji Market toward Sohra Police Post",
+          instructionHi: "चेरापूंजी मार्केट से सोहरा पुलिस चौकी की ओर दक्षिण-पूर्व बढ़ें",
+          distance: "800 m",
+          time: "2 min",
+          coords: [25.2600, 91.7200],
+          advisory: "Paved high-ridge lane with clear visibility."
+        },
+        {
+          id: 2,
+          icon: "turn-right",
+          instruction: "Turn right onto Nohkalikai Plateau Bypass Link",
+          instructionHi: "नोहकलिकाई पठार बाईपास लिंक पर दाएं मुड़ें",
+          distance: "3.5 km",
+          time: "5 min",
+          coords: [25.2620, 91.7250],
+          advisory: "Bypasses active Sohra gorge sheetwash and rockfall zone."
+        },
+        {
+          id: 3,
+          icon: "turn-left",
+          instruction: "Turn left at Eco Park Junction toward Upper Sohra High Ground",
+          instructionHi: "इको पार्क जंक्शन पर अपर सोहरा उच्च भूमि की ओर बाएं मुड़ें",
+          distance: "4.2 km",
+          time: "7 min",
+          coords: [25.2660, 91.7290],
+          advisory: "Doppler radar confirms negligible slope erosion here."
+        },
+        {
+          id: 4,
+          icon: "finish",
+          instruction: "Arrive at Cherrapunji Community Relief Center (Shelter #2)",
+          instructionHi: "चेरापूंजी सामुदायिक राहत केंद्र (आश्रय #2) पर सुरक्षित पहुंचें",
+          distance: "1.3 km",
+          time: "2 min",
+          coords: [25.2760, 91.7360],
+          advisory: "Protected concrete structure with backup generator and emergency supplies."
+        }
       ]
     }
   },
@@ -415,13 +525,63 @@ export const ROADS_DATA = [
       status: "Open",
       distance: "18.5 km",
       extraTime: "+25 mins",
+      duration: "24 mins",
+      origin: "Anjaw Valley Access Post",
+      originHi: "अंजॉ घाटी प्रवेश चौकी",
+      originCoords: [28.6400, 96.1400],
+      destination: "Lohit Border Garrison Emergency Shelter",
+      destinationHi: "लोहित सीमा गैरीसन आपातकालीन राहत केंद्र",
+      destinationCoords: [28.6560, 96.1560],
       notes: "Lower flood plain embankment bypass route",
+      safetyAdvisory: "Bypasses high-gradient rockslide cliffs along NH-13",
       coords: [
         [28.6400, 96.1400],
         [28.6430, 96.1450],
         [28.6470, 96.1500],
         [28.6510, 96.1540],
         [28.6560, 96.1560]
+      ],
+      steps: [
+        {
+          id: 1,
+          icon: "straight",
+          instruction: "Depart Anjaw Base along Low Embankment road",
+          instructionHi: "अंजॉ बेस से निचले तटबंध मार्ग पर आगे बढ़ें",
+          distance: "2.5 km",
+          time: "4 min",
+          coords: [28.6400, 96.1400],
+          advisory: "Flat terrain clear of high mountain boulder hazards."
+        },
+        {
+          id: 2,
+          icon: "turn-left",
+          instruction: "Turn left onto Valley Low Embankment along River Berm",
+          instructionHi: "नदी तटबंध के साथ घाटी निचले मार्ग पर बाएं मुड़ें",
+          distance: "8.0 km",
+          time: "10 min",
+          coords: [28.6430, 96.1450],
+          advisory: "Reinforced gravel embankment protected by flood breakers."
+        },
+        {
+          id: 3,
+          icon: "turn-right",
+          instruction: "Turn right toward Mountain Bridge #4 (Heavy Transport link)",
+          instructionHi: "पहाड़ी पुल #4 (भारी वाहन लिंक) की ओर दाएं मुड़ें",
+          distance: "6.2 km",
+          time: "8 min",
+          coords: [28.6470, 96.1500],
+          advisory: "Heavy-duty steel bridge fully open & certified safe."
+        },
+        {
+          id: 4,
+          icon: "finish",
+          instruction: "Arrive at Lohit Border Garrison Safety Center",
+          instructionHi: "लोहित सीमा गैरीसन सुरक्षा केंद्र पर पहुंचें",
+          distance: "1.8 km",
+          time: "2 min",
+          coords: [28.6560, 96.1560],
+          advisory: "Emergency helipad, satellite medical post, and security outpost active."
+        }
       ]
     }
   },
@@ -542,7 +702,9 @@ export const LOCATIONS_DATA = [
 ];
 
 export const SHELTERS_DATA = [
+  // Shillong Shelters
   {
+    locationId: "shillong",
     name: "Shillong Polo Ground Camp #1",
     nameHi: "शिलांग पोलो ग्राउंड राहत केंद्र #1",
     lat: 25.5840,
@@ -553,6 +715,7 @@ export const SHELTERS_DATA = [
     distance: "0.8 km"
   },
   {
+    locationId: "shillong",
     name: "Mawlai Higher Secondary Relief Zone",
     nameHi: "मावलाई उच्चतर माध्यमिक राहत क्षेत्र",
     lat: 25.5890,
@@ -563,6 +726,7 @@ export const SHELTERS_DATA = [
     distance: "1.6 km"
   },
   {
+    locationId: "shillong",
     name: "St. Anthony Relief Safe Ground",
     nameHi: "सेंट एंथोनी राहत सुरक्षित क्षेत्र",
     lat: 25.5690,
@@ -571,6 +735,53 @@ export const SHELTERS_DATA = [
     supplies: "Community Kitchen, Satellite Comm Hub",
     suppliesHi: "सामुदायिक रसोई, सैटेलाइट संचार केंद्र",
     distance: "2.1 km"
+  },
+  // Cherrapunji Shelters
+  {
+    locationId: "cherrapunji",
+    name: "Sohra Civil Sub-Division Relief Camp",
+    nameHi: "सोहरा सिविल सब-डिवीजन राहत शिविर",
+    lat: 25.2750,
+    lng: 91.7350,
+    capacity: "120 / 350 Occupied",
+    supplies: "Emergency Rations, First Aid, Sat Phone",
+    suppliesHi: "आपातकालीन राशन, प्राथमिक उपचार, सैटेलाइट फोन",
+    distance: "1.1 km"
+  },
+  {
+    locationId: "cherrapunji",
+    name: "Cherra Mission Hospital High Ground",
+    nameHi: "चेरा मिशन अस्पताल सुरक्षित क्षेत्र",
+    lat: 25.2650,
+    lng: 91.7220,
+    capacity: "60 / 200 Occupied",
+    supplies: "Trauma Care, Backup Power, Water Purifier",
+    suppliesHi: "आघात देखभाल, बैकअप बिजली, जल शोधक",
+    distance: "1.8 km"
+  },
+  // Arunachal Shelters
+  {
+    locationId: "arunachal",
+    name: "Hayuliang Community Safety Center",
+    nameHi: "हयूलियांग सामुदायिक सुरक्षा केंद्र",
+    lat: 28.6460,
+    lng: 96.1450,
+    capacity: "95 / 250 Occupied",
+    supplies: "Army Medical Aid, Heavy Blankets, Wireless Ham",
+    suppliesHi: "सैन्य चिकित्सा सहायता, भारी कंबल, वायरलेस हैम",
+    distance: "1.4 km"
+  },
+  // Guwahati Shelters
+  {
+    locationId: "guwahati",
+    name: "Guwahati Municipal High-Ground Safe Zone",
+    nameHi: "गुवाहाटी नगर निगम सुरक्षित क्षेत्र",
+    lat: 26.1500,
+    lng: 91.7420,
+    capacity: "180 / 600 Occupied",
+    supplies: "SDRF Station, Flood Pumps, Clean Water Tanker",
+    suppliesHi: "एसडीआरएफ स्टेशन, बाढ़ पंप, स्वच्छ जल टैंकर",
+    distance: "0.9 km"
   }
 ];
 
@@ -669,6 +880,24 @@ export const HEATMAP_CIRCLES = [
     displacement: "1.9 mm/h",
     saturation: "79% Elevated",
     description: "Roadcut hillside face with minor loose shale debris."
+  },
+
+  // --- GUWAHATI REGION ---
+  {
+    id: "guwahati-drainage-watch",
+    locationId: "guwahati",
+    name: "Guwahati Valley Flood Embankment",
+    severity: "watch", // WATCH
+    color: "#d97706",
+    fillColor: "#f59e0b",
+    center: [26.1445, 91.7362],
+    innerRadius: 600,
+    outerRadius: 1100,
+    riskScore: "45% Monitored",
+    displacement: "0.4 mm/h (Stable Bedrock)",
+    saturation: "48% Normal",
+    description: "Monitored urban river drainage corridor with steady stormwater flow."
   }
 ];
+
 

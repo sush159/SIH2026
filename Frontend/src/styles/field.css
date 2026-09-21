@@ -841,7 +841,27 @@ button, input, select, textarea, code, kbd, samp, pre {
 #fieldTacticalMap {
   width: 100%;
   height: 100%;
+  min-height: 500px;
   z-index: 1;
+  position: relative;
+}
+
+.maplibregl-map {
+  width: 100% !important;
+  height: 100% !important;
+  font-family: inherit;
+  position: relative !important;
+}
+
+.maplibregl-canvas-container {
+  width: 100% !important;
+  height: 100% !important;
+}
+
+.maplibregl-canvas {
+  width: 100% !important;
+  height: 100% !important;
+  outline: none;
 }
 
 .field-map-top-bar {
@@ -932,6 +952,499 @@ button, input, select, textarea, code, kbd, samp, pre {
   to { transform: translateY(0); opacity: 1; }
 }
 
+/* ==========================================================================
+   HARDWARE & SENSOR TELEMETRY STYLES
+   ========================================================================== */
+.field-hardware-stats-bar {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+}
+
+.hardware-stat-card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  box-shadow: var(--shadow-xs);
+}
+
+.hardware-stat-val {
+  font-size: 1.4rem;
+  font-weight: 800;
+  color: var(--text-primary);
+}
+
+.hardware-stat-label {
+  font-size: 0.74rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.hardware-cards-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 14px;
+}
+
+.hardware-card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md);
+  padding: 18px;
+  box-shadow: var(--shadow-xs);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  transition: all 0.18s ease;
+  position: relative;
+}
+
+.hardware-card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-md);
+  border-color: var(--border-strong);
+}
+
+.hardware-card.critical {
+  border-left: 5px solid #dc2626;
+}
+.hardware-card.warning {
+  border-left: 5px solid #ea580c;
+}
+.hardware-card.active {
+  border-left: 5px solid #16a34a;
+}
+
+.hardware-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.hardware-device-id {
+  font-size: 0.72rem;
+  font-weight: 800;
+  color: var(--color-accent);
+  letter-spacing: 0.04em;
+}
+
+.hardware-device-title {
+  font-size: 1.05rem;
+  font-weight: 800;
+  color: var(--text-primary);
+  margin-top: 2px;
+}
+
+.hardware-telemetry-box {
+  background: var(--bg-subtle);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+  padding: 12px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.telemetry-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.telemetry-item-label {
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+
+.telemetry-item-val {
+  font-size: 0.84rem;
+  font-weight: 800;
+  color: var(--text-primary);
+}
+
+.hardware-meta-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  border-top: 1px dashed var(--border-light);
+  padding-top: 10px;
+}
+
+.btn-run-diagnostics {
+  background: #0f172a;
+  color: #ffffff;
+  border: none;
+  padding: 8px 14px;
+  border-radius: var(--radius-xs);
+  font-size: 0.78rem;
+  font-weight: 700;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  transition: all 0.15s ease;
+  width: 100%;
+}
+
+.btn-run-diagnostics:hover {
+  background: #1e293b;
+  transform: translateY(-1px);
+}
+
+.diagnostic-test-panel {
+  background: #090d16;
+  color: #38bdf8;
+  border: 1px solid #1e293b;
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
+  font-size: 0.75rem;
+  line-height: 1.4;
+  margin-top: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* ==========================================================================
+   ASSIGNED CITIZEN REPORTS & VERIFICATION STYLES
+   ========================================================================== */
+.citizen-reports-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 14px;
+}
+
+.citizen-report-card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md);
+  padding: 18px 20px;
+  box-shadow: var(--shadow-xs);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  transition: all 0.18s ease;
+}
+
+.citizen-report-card.critical {
+  border-left: 5px solid #dc2626;
+}
+.citizen-report-card.high {
+  border-left: 5px solid #ea580c;
+}
+.citizen-report-card.moderate {
+  border-left: 5px solid #d97706;
+}
+
+.report-evidence-wrap {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.report-thumbnail-img {
+  width: 130px;
+  height: 90px;
+  object-fit: cover;
+  border-radius: var(--radius-xs);
+  border: 1px solid var(--border-light);
+  flex-shrink: 0;
+}
+
+.report-details-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ground-check-box {
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ground-check-title {
+  font-size: 0.8rem;
+  font-weight: 800;
+  color: #166534;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ground-check-inputs-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px;
+}
+
+.check-input-group {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.check-input-label {
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: var(--text-secondary);
+}
+
+.check-input-field {
+  background: #ffffff;
+  border: 1px solid var(--border-medium);
+  border-radius: var(--radius-xs);
+  padding: 6px 8px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  outline: none;
+}
+
+.check-input-field:focus {
+  border-color: #16a34a;
+}
+
+.report-action-buttons-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 6px;
+}
+
+.btn-report-action {
+  padding: 8px 14px;
+  border: none;
+  border-radius: var(--radius-xs);
+  font-size: 0.78rem;
+  font-weight: 700;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.15s ease;
+}
+
+.btn-report-action.danger {
+  background: #dc2626;
+  color: #ffffff;
+}
+.btn-report-action.danger:hover {
+  background: #b91c1c;
+}
+
+.btn-report-action.success {
+  background: #16a34a;
+  color: #ffffff;
+}
+.btn-report-action.success:hover {
+  background: #15803d;
+}
+
+.btn-report-action.warning {
+  background: #d97706;
+  color: #ffffff;
+}
+.btn-report-action.warning:hover {
+  background: #b45309;
+}
+
+/* ==========================================================================
+   ROAD CORRIDOR MANAGEMENT STYLES
+   ========================================================================== */
+.field-roads-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 16px;
+}
+
+.field-road-card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md);
+  padding: 20px;
+  box-shadow: var(--shadow-xs);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  transition: all 0.18s ease;
+}
+
+.field-road-card.blocked {
+  border-left: 5px solid #dc2626;
+}
+.field-road-card.atrisk {
+  border-left: 5px solid #ea580c;
+}
+.field-road-card.open {
+  border-left: 5px solid #16a34a;
+}
+
+.road-header-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.road-status-controls-box {
+  background: var(--bg-subtle);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.road-status-btn-group {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.road-status-select-btn {
+  padding: 7px 14px;
+  border-radius: var(--radius-xs);
+  font-size: 0.78rem;
+  font-weight: 800;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: all 0.15s ease;
+}
+
+.road-status-select-btn.blocked-btn {
+  background: #fee2e2;
+  color: #991b1b;
+  border-color: #fca5a5;
+}
+.road-status-select-btn.blocked-btn.selected {
+  background: #dc2626;
+  color: #ffffff;
+  border-color: #dc2626;
+  box-shadow: 0 2px 8px rgba(220, 38, 38, 0.35);
+}
+
+.road-status-select-btn.atrisk-btn {
+  background: #ffedd5;
+  color: #9a3412;
+  border-color: #fdba74;
+}
+.road-status-select-btn.atrisk-btn.selected {
+  background: #ea580c;
+  color: #ffffff;
+  border-color: #ea580c;
+  box-shadow: 0 2px 8px rgba(234, 88, 12, 0.35);
+}
+
+.road-status-select-btn.open-btn {
+  background: #dcfce7;
+  color: #166534;
+  border-color: #86efac;
+}
+.road-status-select-btn.open-btn.selected {
+  background: #16a34a;
+  color: #ffffff;
+  border-color: #16a34a;
+  box-shadow: 0 2px 8px rgba(22, 163, 74, 0.35);
+}
+
+.road-edit-fields-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.road-edit-input {
+  width: 100%;
+  background: #ffffff;
+  border: 1px solid var(--border-medium);
+  border-radius: var(--radius-xs);
+  padding: 8px 10px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  outline: none;
+}
+
+.road-edit-input:focus {
+  border-color: #0284c7;
+}
+
+.btn-broadcast-road-update {
+  background: linear-gradient(135deg, #0284c7 0%, #0369a1 100%);
+  color: #ffffff;
+  border: none;
+  padding: 10px 18px;
+  border-radius: var(--radius-xs);
+  font-size: 0.82rem;
+  font-weight: 800;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  box-shadow: 0 2px 8px rgba(2, 132, 199, 0.3);
+  transition: all 0.15s ease;
+}
+
+.btn-broadcast-road-update:hover {
+  filter: brightness(1.08);
+  transform: translateY(-1px);
+}
+
+/* ==========================================================================
+   TACTICAL MAP LAYER CONTROLS
+   ========================================================================== */
+.tactical-map-layer-bar {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.map-layer-toggle-btn {
+  background: #ffffff;
+  border: 1px solid var(--border-medium);
+  color: var(--text-secondary);
+  font-size: 0.74rem;
+  font-weight: 700;
+  padding: 5px 10px;
+  border-radius: var(--radius-xs);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  transition: all 0.15s ease;
+}
+
+.map-layer-toggle-btn:hover {
+  background: var(--bg-subtle);
+  color: var(--text-primary);
+}
+
+.map-layer-toggle-btn.active {
+  background: #0f172a;
+  color: #ffffff;
+  border-color: #0f172a;
+}
+
 @media (max-width: 768px) {
   .field-header {
     flex-direction: column;
@@ -941,10 +1454,11 @@ button, input, select, textarea, code, kbd, samp, pre {
     width: 100%;
     overflow-x: auto;
   }
-  .hardware-diagnostics-grid {
+  .hardware-cards-grid {
     grid-template-columns: 1fr;
   }
-  .severity-radio-group {
+  .road-edit-fields-row {
     grid-template-columns: 1fr;
   }
 }
+

@@ -29,7 +29,7 @@ export async function connectArduino(onMessage) {
 export async function sendToArduino(message, onMessage) {
   if (!arduinoWriter) {
     console.warn("Arduino not connected yet.");
-    if (onMessage) onMessage("⚠ LED device not connected — click 'Connect LED Alert Device' first.");
+    if (onMessage) onMessage("LED device not connected — click 'Connect LED Alert Device' first.");
     return false;
   }
   try {
@@ -38,7 +38,7 @@ export async function sendToArduino(message, onMessage) {
     return true;
   } catch (err) {
     console.error("Error sending to Arduino:", err);
-    if (onMessage) onMessage("⚠ Lost connection to LED device — please reconnect.");
+    if (onMessage) onMessage("Lost connection to LED device — please reconnect.");
     try {
       arduinoWriter.releaseLock();
     } catch (e) {}

@@ -83,12 +83,27 @@ export default function CitizenPortal() {
   const t = TRANSLATIONS[lang] || TRANSLATIONS.en;
   const riskInfo = RISK_DATA[currentRisk] || RISK_DATA.safe;
 
-  // Basemap Layer State (OpenStreetMap Streets View Default)
-  const [mapBasemap, setMapBasemap] = useState('osm'); // 'osm' | 'topo' | 'hot'
+  // Basemap Layer State (Realistic High-Resolution Satellite Hybrid View Default)
+  const [mapBasemap, setMapBasemap] = useState('satellite'); // 'satellite' | 'topo' | 'osm'
   const [activeAltRoute, setActiveAltRoute] = useState(ROADS_DATA[0]?.alternateRoute || null);
+
+  // Google Maps Turn-by-Turn Navigation State
+  const [showDirectionsModal, setShowDirectionsModal] = useState(false);
+  const [navRoute, setNavRoute] = useState(ROADS_DATA[0]?.alternateRoute || null);
+  const [isSimulatingNav, setIsSimulatingNav] = useState(false);
+  const [currentNavStepIndex, setCurrentNavStepIndex] = useState(0);
+  const [voiceGuidanceEnabled, setVoiceGuidanceEnabled] = useState(true);
+  const [navRemainingDistance, setNavRemainingDistance] = useState('12.4 km');
+  const [navRemainingTime, setNavRemainingTime] = useState('18 mins');
+  const [navEtaText, setNavEtaText] = useState('09:45 AM');
+
+  const simNavTimerRef = useRef(null);
+  const navVehicleMarkerRef = useRef(null);
+  const simCoordIndexRef = useRef(0);
 
   const mapContainerRef = useRef(null);
   const mapInstanceRef = useRef(null);
+  const markersRef = useRef([]);
   const roadLayersRef = useRef({});
   const heatmapLayersRef = useRef([]);
   const altLayerRef = useRef(null);
@@ -97,16 +112,23 @@ export default function CitizenPortal() {
   const handleSwitchBasemap = (mode) => {
     setMapBasemap(mode);
     if (mapInstanceRef.current) {
-      ['topo-layer', 'osm-layer', 'hot-layer'].forEach(layerId => {
-        if (mapInstanceRef.current.getLayer(layerId)) {
-          mapInstanceRef.current.setLayoutProperty(
-            layerId,
-            'visibility',
-            layerId.startsWith(mode) ? 'visible' : 'none'
-          );
-        }
-      });
-      showAppToast(`Basemap switched to ${mode === 'topo' ? '🏔️ Realistic Topo Relief' : (mode === 'osm' ? '🗺️ OpenStreetMap Streets' : '🚑 Disaster HOT')}`);
+      const map = mapInstanceRef.current;
+      if (mode === 'satellite') {
+        if (map.getLayer('satellite-layer')) map.setLayoutProperty('satellite-layer', 'visibility', 'visible');
+        if (map.getLayer('topo-layer')) map.setLayoutProperty('topo-layer', 'visibility', 'none');
+        if (map.getLayer('osm-layer')) map.setLayoutProperty('osm-layer', 'visibility', 'none');
+        showAppToast('Basemap: Satellite Hybrid');
+      } else if (mode === 'topo') {
+        if (map.getLayer('satellite-layer')) map.setLayoutProperty('satellite-layer', 'visibility', 'none');
+        if (map.getLayer('topo-layer')) map.setLayoutProperty('topo-layer', 'visibility', 'visible');
+        if (map.getLayer('osm-layer')) map.setLayoutProperty('osm-layer', 'visibility', 'none');
+        showAppToast('Basemap: Topo Relief');
+      } else {
+        if (map.getLayer('satellite-layer')) map.setLayoutProperty('satellite-layer', 'visibility', 'none');
+        if (map.getLayer('topo-layer')) map.setLayoutProperty('topo-layer', 'visibility', 'none');
+        if (map.getLayer('osm-layer')) map.setLayoutProperty('osm-layer', 'visibility', 'visible');
+        showAppToast('Basemap: Street Grid');
+      }
     }
   };
 
@@ -423,54 +445,183 @@ export default function CitizenPortal() {
     return ret;
   };
 
+  // Helper to build GeoJSON danger zone features for a given location
+  const buildDangerFeatures = (loc) => {
+    const activeHeatmaps = HEATMAP_CIRCLES.filter(z => !z.locationId || z.locationId === loc.id);
+    const circlesToRender = activeHeatmaps.length > 0 ? activeHeatmaps : HEATMAP_CIRCLES.slice(0, 2);
+
+    const dangerFeatures = [];
+    circlesToRender.forEach(zone => {
+      const isCrit = zone.severity === 'critical';
+      const isWarn = zone.severity === 'warning';
+      const outerRing = createGeoJSONCircle(zone.center[0], zone.center[1], zone.outerRadius || 1200);
+      const innerRing = createGeoJSONCircle(zone.center[0], zone.center[1], zone.innerRadius || 650);
+
+      dangerFeatures.push({
+        type: 'Feature',
+        properties: {
+          id: `${zone.id}-halo`,
+          name: zone.name,
+          color: isCrit ? '#dc2626' : (isWarn ? '#ea580c' : '#d97706'),
+          fillColor: isCrit ? '#dc2626' : (isWarn ? '#ea580c' : '#f59e0b'),
+          fillOpacity: isCrit ? 0.30 : (isWarn ? 0.24 : 0.20),
+          riskScore: zone.riskScore,
+          displacement: zone.displacement,
+          saturation: zone.saturation,
+          description: zone.description,
+          isCore: false
+        },
+        geometry: { type: 'Polygon', coordinates: [outerRing] }
+      });
+
+      dangerFeatures.push({
+        type: 'Feature',
+        properties: {
+          id: `${zone.id}-core`,
+          name: zone.name,
+          color: isCrit ? '#b91c1c' : (isWarn ? '#c2410c' : '#b45309'),
+          fillColor: isCrit ? '#ef4444' : (isWarn ? '#f97316' : '#eab308'),
+          fillOpacity: isCrit ? 0.60 : (isWarn ? 0.50 : 0.40),
+          riskScore: zone.riskScore,
+          displacement: zone.displacement,
+          saturation: zone.saturation,
+          description: zone.description,
+          isCore: true
+        },
+        geometry: { type: 'Polygon', coordinates: [innerRing] }
+      });
+    });
+
+    return { dangerFeatures, circlesToRender };
+  };
+
+  // Helper to re-render all HTML markers (User GPS, Danger Zone Pulses, Shelters)
+  const renderLocationMarkersAndZones = (map, loc) => {
+    if (!map) return;
+
+    // 1. Update Danger Zone GeoJSON source
+    const { dangerFeatures, circlesToRender } = buildDangerFeatures(loc);
+    const dangerSource = map.getSource('danger-zones-source');
+    if (dangerSource) {
+      dangerSource.setData({
+        type: 'FeatureCollection',
+        features: dangerFeatures
+      });
+    }
+
+    // 2. Clear old HTML markers
+    markersRef.current.forEach(m => {
+      try { m.remove(); } catch (e) {}
+    });
+    markersRef.current = [];
+
+    // 3. User Live GPS Pin with animated radar wave
+    const userEl = document.createElement('div');
+    userEl.className = 'user-marker-wrapper';
+    userEl.innerHTML = `
+      <div class="user-gps-pin">
+        <div class="user-gps-pulse"></div>
+        <div class="user-gps-dot"></div>
+      </div>
+    `;
+
+    const userPopup = new maplibregl.Popup({ offset: 12 }).setHTML(`
+      <div style="font-family: 'Plus Jakarta Sans', sans-serif; font-size: 0.82rem; padding: 4px;">
+        <div style="display:flex; align-items:center; gap:6px; margin-bottom:2px;">
+          <span style="width:8px; height:8px; border-radius:50%; background:#2563eb; display:inline-block;"></span>
+          <strong style="color: #2563eb;">Monitored Location</strong>
+        </div>
+        <span style="font-size:0.75rem; color:#475569;">${loc.name}</span><br/>
+        <span style="font-size:0.72rem; color:#16a34a; font-weight:700;">Live Geolocation Active</span>
+      </div>
+    `);
+
+    const userMarker = new maplibregl.Marker({ element: userEl })
+      .setLngLat([loc.lng, loc.lat])
+      .setPopup(userPopup)
+      .addTo(map);
+    markersRef.current.push(userMarker);
+
+    // 4. Shelters for current location
+    const sheltersForLoc = SHELTERS_DATA.filter(s => !s.locationId || s.locationId === loc.id);
+    sheltersForLoc.forEach(shelter => {
+      const el = document.createElement('div');
+      el.className = 'maplibre-shelter-marker';
+      el.style.cssText = 'width: 28px; height: 28px; border-radius: 50%; background: #0284c7; border: 2.5px solid #ffffff; box-shadow: 0 3px 10px rgba(2,132,199,0.5); display: flex; align-items: center; justify-content: center; cursor: pointer; color: white;';
+      el.innerHTML = `
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+          <polyline points="9 22 9 12 15 12 15 22"/>
+        </svg>
+      `;
+
+      const popup = new maplibregl.Popup({ offset: 15 }).setHTML(`
+        <div style="font-family: 'Plus Jakarta Sans', sans-serif; font-size: 0.8rem; padding: 4px;">
+          <strong style="color:#0284c7;">${shelter.name}</strong><br/>
+          Occupancy: ${shelter.capacity}<br/>
+          Supplies: ${shelter.supplies}
+        </div>
+      `);
+
+      const m = new maplibregl.Marker({ element: el })
+        .setLngLat([shelter.lng, shelter.lat])
+        .setPopup(popup)
+        .addTo(map);
+      markersRef.current.push(m);
+    });
+
+    // 5. Danger Zone Center Badges with Pulse Rings
+    circlesToRender.forEach(zone => {
+      const isCrit = zone.severity === 'critical';
+      const isWarn = zone.severity === 'warning';
+      const badgeEl = document.createElement('div');
+      badgeEl.className = `maplibre-danger-marker ${isCrit ? 'critical' : (isWarn ? 'warning' : 'safe')}`;
+      badgeEl.innerHTML = `
+        <div class="danger-marker-pulse ${isCrit ? 'red-pulse' : (isWarn ? 'orange-pulse' : '')}"></div>
+        <div class="danger-marker-pill ${isCrit ? 'red-pill' : 'orange-pill'}">
+          <span style="width:7px; height:7px; border-radius:50%; background:${isCrit ? '#ef4444' : '#f97316'}; display:inline-block;"></span>
+          <span>${zone.name}</span>
+          <span class="danger-marker-tag">${isCrit ? 'CRITICAL: ' + zone.riskScore : (isWarn ? 'AT-RISK: ' + zone.riskScore : 'WATCH: ' + zone.riskScore)}</span>
+        </div>
+      `;
+
+      const popup = new maplibregl.Popup({ offset: 20 }).setHTML(`
+        <div style="font-family: 'Plus Jakarta Sans', sans-serif; font-size: 0.82rem; padding: 6px; min-width: 230px;">
+          <div style="display:flex; align-items:center; gap:6px; margin-bottom:4px;">
+            <span style="width:8px; height:8px; border-radius:50%; background:${isCrit ? '#dc2626' : (isWarn ? '#ea580c' : '#d97706')};"></span>
+            <strong style="color: ${isCrit ? '#dc2626' : (isWarn ? '#ea580c' : '#d97706')}; font-size: 0.9rem;">${zone.name}</strong>
+          </div>
+          <div style="background: ${isCrit ? '#fef2f2' : (isWarn ? '#fff7ed' : '#fefce8')}; border-radius: 6px; padding: 6px 8px; margin: 4px 0 8px; border-left: 3px solid ${isCrit ? '#dc2626' : (isWarn ? '#ea580c' : '#d97706')};">
+            <div style="font-size: 0.76rem; font-weight:700; color: ${isCrit ? '#991b1b' : (isWarn ? '#9a3412' : '#854d0e')};">Risk Score: ${zone.riskScore}</div>
+            <div style="font-size: 0.74rem; color: #475569;">InSAR Shift: ${zone.displacement}</div>
+            <div style="font-size: 0.74rem; color: #475569;">Soil Saturation: ${zone.saturation}</div>
+          </div>
+          <p style="margin: 0; font-size: 0.74rem; color: #64748b; line-height: 1.4;">
+            ${zone.description}
+          </p>
+        </div>
+      `);
+
+      const m = new maplibregl.Marker({ element: badgeEl })
+        .setLngLat([zone.center[1], zone.center[0]])
+        .setPopup(popup)
+        .addTo(map);
+      markersRef.current.push(m);
+    });
+  };
+
   // MapLibre GL 3D Map setup and lifecycle
   useEffect(() => {
     if (activeTab === 'map' && mapContainerRef.current) {
-      if (!mapInstanceRef.current) {
-        // Build GeoJSON features for danger zones
-        const activeHeatmaps = HEATMAP_CIRCLES.filter(z => !z.locationId || z.locationId === selectedLocation.id);
-        const circlesToRender = activeHeatmaps.length > 0 ? activeHeatmaps : HEATMAP_CIRCLES.slice(0, 2);
+      const containerHasCanvas = mapContainerRef.current.querySelector('.maplibregl-canvas');
 
-        const dangerFeatures = [];
-        circlesToRender.forEach(zone => {
-          const isCrit = zone.severity === 'critical';
-          const outerRing = createGeoJSONCircle(zone.center[0], zone.center[1], zone.outerRadius || 1200);
-          const innerRing = createGeoJSONCircle(zone.center[0], zone.center[1], zone.innerRadius || 650);
+      if (!mapInstanceRef.current || !containerHasCanvas) {
+        if (mapInstanceRef.current) {
+          try { mapInstanceRef.current.remove(); } catch (e) {}
+          mapInstanceRef.current = null;
+        }
 
-          dangerFeatures.push({
-            type: 'Feature',
-            properties: {
-              id: `${zone.id}-halo`,
-              name: zone.name,
-              color: isCrit ? '#dc2626' : '#ea580c',
-              fillColor: isCrit ? '#dc2626' : '#ea580c',
-              fillOpacity: isCrit ? 0.32 : 0.26,
-              riskScore: zone.riskScore,
-              displacement: zone.displacement,
-              saturation: zone.saturation,
-              description: zone.description,
-              isCore: false
-            },
-            geometry: { type: 'Polygon', coordinates: [outerRing] }
-          });
-
-          dangerFeatures.push({
-            type: 'Feature',
-            properties: {
-              id: `${zone.id}-core`,
-              name: zone.name,
-              color: isCrit ? '#b91c1c' : '#c2410c',
-              fillColor: isCrit ? '#ef4444' : '#f97316',
-              fillOpacity: isCrit ? 0.65 : 0.55,
-              riskScore: zone.riskScore,
-              displacement: zone.displacement,
-              saturation: zone.saturation,
-              description: zone.description,
-              isCore: true
-            },
-            geometry: { type: 'Polygon', coordinates: [innerRing] }
-          });
-        });
+        const { dangerFeatures } = buildDangerFeatures(selectedLocation);
 
         // Build GeoJSON features for Road Corridors
         const roadFeatures = ROADS_DATA.map(road => ({
@@ -494,34 +645,38 @@ export default function CitizenPortal() {
           style: {
             version: 8,
             sources: {
+              'satellite-tiles': {
+                type: 'raster',
+                tiles: [
+                  'https://mt0.google.com/vt/lyrs=y&x={x}&y={y}&z={z}',
+                  'https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}',
+                  'https://mt2.google.com/vt/lyrs=y&x={x}&y={y}&z={z}',
+                  'https://mt3.google.com/vt/lyrs=y&x={x}&y={y}&z={z}'
+                ],
+                tileSize: 256,
+                attribution: '&copy; Google Satellite'
+              },
               'topo-tiles': {
                 type: 'raster',
                 tiles: [
-                  'https://a.tile.opentopomap.org/{z}/{x}/{y}.png',
-                  'https://b.tile.opentopomap.org/{z}/{x}/{y}.png',
-                  'https://c.tile.opentopomap.org/{z}/{x}/{y}.png'
+                  'https://mt0.google.com/vt/lyrs=p&x={x}&y={y}&z={z}',
+                  'https://mt1.google.com/vt/lyrs=p&x={x}&y={y}&z={z}',
+                  'https://mt2.google.com/vt/lyrs=p&x={x}&y={y}&z={z}',
+                  'https://mt3.google.com/vt/lyrs=p&x={x}&y={y}&z={z}'
                 ],
                 tileSize: 256,
-                attribution: '&copy; OpenTopoMap contributors'
+                attribution: '&copy; Google Topo Terrain'
               },
               'osm-tiles': {
                 type: 'raster',
                 tiles: [
-                  'https://a.tile.openstreetmap.org/{z}/{x}/{y}.png',
-                  'https://b.tile.openstreetmap.org/{z}/{x}/{y}.png',
-                  'https://c.tile.openstreetmap.org/{z}/{x}/{y}.png'
+                  'https://mt0.google.com/vt/lyrs=m&x={x}&y={y}&z={z}',
+                  'https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}',
+                  'https://mt2.google.com/vt/lyrs=m&x={x}&y={y}&z={z}',
+                  'https://mt3.google.com/vt/lyrs=m&x={x}&y={y}&z={z}'
                 ],
                 tileSize: 256,
-                attribution: '&copy; OpenStreetMap contributors'
-              },
-              'hot-tiles': {
-                type: 'raster',
-                tiles: [
-                  'https://a.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png',
-                  'https://b.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png'
-                ],
-                tileSize: 256,
-                attribution: '&copy; Humanitarian OpenStreetMap Team'
+                attribution: '&copy; Google Maps'
               },
               'danger-zones-source': {
                 type: 'geojson',
@@ -547,28 +702,28 @@ export default function CitizenPortal() {
             },
             layers: [
               {
-                id: 'osm-layer',
+                id: 'satellite-layer',
                 type: 'raster',
-                source: 'osm-tiles',
-                layout: { visibility: 'visible' },
+                source: 'satellite-tiles',
+                layout: { visibility: mapBasemap === 'satellite' ? 'visible' : 'none' },
                 minzoom: 0,
-                maxzoom: 19
+                maxzoom: 20
               },
               {
                 id: 'topo-layer',
                 type: 'raster',
                 source: 'topo-tiles',
-                layout: { visibility: 'none' },
+                layout: { visibility: mapBasemap === 'topo' ? 'visible' : 'none' },
                 minzoom: 0,
-                maxzoom: 17
+                maxzoom: 20
               },
               {
-                id: 'hot-layer',
+                id: 'osm-layer',
                 type: 'raster',
-                source: 'hot-tiles',
-                layout: { visibility: 'none' },
+                source: 'osm-tiles',
+                layout: { visibility: mapBasemap === 'osm' ? 'visible' : 'none' },
                 minzoom: 0,
-                maxzoom: 19
+                maxzoom: 20
               },
               {
                 id: 'danger-zones-fill',
@@ -586,6 +741,7 @@ export default function CitizenPortal() {
                 paint: {
                   'line-color': ['get', 'color'],
                   'line-width': ['case', ['get', 'isCore'], 3.5, 2],
+                  'line-dasharray': [3, 2],
                   'line-opacity': 0.95
                 }
               },
@@ -655,7 +811,7 @@ export default function CitizenPortal() {
             ]
           },
           center: [selectedLocation.lng, selectedLocation.lat],
-          zoom: 13,
+          zoom: 13.5,
           pitch: 50, // 3D slope perspective
           bearing: 15,
           maxPitch: 85,
@@ -664,84 +820,10 @@ export default function CitizenPortal() {
 
         map.on('load', () => {
           map.resize();
-        });
-
-        // Add Shelters as Markers
-        SHELTERS_DATA.forEach(shelter => {
-          const el = document.createElement('div');
-          el.className = 'maplibre-shelter-marker';
-          el.style.cssText = 'width: 28px; height: 28px; border-radius: 50%; background: #0284c7; border: 2.5px solid #ffffff; box-shadow: 0 3px 10px rgba(2,132,199,0.5); display: flex; align-items: center; justify-content: center; cursor: pointer; color: white; font-weight: 800; font-size: 13px;';
-          el.innerHTML = '🏠';
-
-          const popup = new maplibregl.Popup({ offset: 15 }).setHTML(`
-            <div style="font-family: 'Plus Jakarta Sans', sans-serif; font-size: 0.8rem; padding: 4px;">
-              <strong style="color:#0284c7;">${shelter.name}</strong><br/>
-              Occupancy: ${shelter.capacity}<br/>
-              Supplies: ${shelter.supplies}
-            </div>
-          `);
-
-          new maplibregl.Marker({ element: el })
-            .setLngLat([shelter.lng, shelter.lat])
-            .setPopup(popup)
-            .addTo(map);
-        });
-
-        // Add Danger Zone Center Badges with Pulse Rings
-        circlesToRender.forEach(zone => {
-          const isCrit = zone.severity === 'critical';
-          const badgeEl = document.createElement('div');
-          badgeEl.className = `maplibre-danger-marker ${isCrit ? 'critical' : 'warning'}`;
-          badgeEl.innerHTML = `
-            <div class="danger-marker-pulse ${isCrit ? 'red-pulse' : 'orange-pulse'}"></div>
-            <div class="danger-marker-pill ${isCrit ? 'red-pill' : 'orange-pill'}">
-              <span>${isCrit ? '🔴' : '🟠'}</span>
-              <span>${zone.name}</span>
-              <span class="danger-marker-tag">${isCrit ? 'CRITICAL DANGER' : 'AT-RISK WARNING'}</span>
-            </div>
-          `;
-
-          const popup = new maplibregl.Popup({ offset: 20 }).setHTML(`
-            <div style="font-family: 'Plus Jakarta Sans', sans-serif; font-size: 0.82rem; padding: 6px; min-width: 230px;">
-              <div style="display:flex; align-items:center; gap:6px; margin-bottom:4px;">
-                <span style="font-size:1.1rem;">${isCrit ? '🔴' : '🟠'}</span>
-                <strong style="color: ${isCrit ? '#dc2626' : '#ea580c'}; font-size: 0.9rem;">${zone.name}</strong>
-              </div>
-              <div style="background: ${isCrit ? '#fef2f2' : '#fff7ed'}; border-radius: 6px; padding: 6px 8px; margin: 4px 0 8px; border-left: 3px solid ${isCrit ? '#dc2626' : '#ea580c'};">
-                <div style="font-size: 0.76rem; font-weight:700; color: ${isCrit ? '#991b1b' : '#9a3412'};">Risk Score: ${zone.riskScore}</div>
-                <div style="font-size: 0.74rem; color: #475569;">InSAR Shift: ${zone.displacement}</div>
-                <div style="font-size: 0.74rem; color: #475569;">Soil Saturation: ${zone.saturation}</div>
-              </div>
-              <p style="margin: 0; font-size: 0.74rem; color: #64748b; line-height: 1.4;">
-                ${zone.description}
-              </p>
-            </div>
-          `);
-
-          new maplibregl.Marker({ element: badgeEl })
-            .setLngLat([zone.center[1], zone.center[0]])
-            .setPopup(popup)
-            .addTo(map);
-        });
-
-        // Click on Road lines for inspection popup
-        map.on('click', 'roads-line', (e) => {
-          if (!e.features || !e.features[0]) return;
-          const feat = e.features[0];
-          const matchedRoad = ROADS_DATA.find(r => r.id === feat.properties.id);
-          if (matchedRoad) {
-            setSelectedRoad(matchedRoad);
+          renderLocationMarkersAndZones(map, selectedLocation);
+          if (selectedRoad?.alternateRoute || ROADS_DATA[0]?.alternateRoute) {
+            drawAltRoute(selectedRoad?.alternateRoute || ROADS_DATA[0].alternateRoute, map, false);
           }
-          new maplibregl.Popup()
-            .setLngLat(e.lngLat)
-            .setHTML(`
-              <div style="font-family: 'Plus Jakarta Sans', sans-serif; font-size: 0.82rem; padding: 4px;">
-                <strong style="color:${feat.properties.color}; font-size:0.88rem;">${feat.properties.name}</strong><br/>
-                <strong>Status:</strong> <span style="font-weight:700; color:${feat.properties.color};">${feat.properties.status}</span><br/>
-                <span>${feat.properties.statusText || ''}</span>
-              </div>
-            `)
-            .addTo(map);
         });
 
         // Click on Road lines for inspection popup
@@ -776,13 +858,17 @@ export default function CitizenPortal() {
             .setHTML(`
               <div style="font-family: 'Plus Jakarta Sans', sans-serif; font-size: 0.84rem; padding: 6px; min-width: 220px;">
                 <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 4px;">
-                  <span style="font-size: 1.1rem;">🛣️</span>
+                  <span style="display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; background: #dcfce7; border-radius: 4px; color: #15803d;">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="9 18 15 12 9 6"/><path d="M4 12h11"/></svg>
+                  </span>
                   <strong style="color: #059669; font-size: 0.92rem;">${p.name}</strong>
                 </div>
                 <div style="background: #f0fdf4; border-radius: 6px; padding: 6px 8px; margin: 4px 0 8px; border-left: 3px solid #10b981;">
-                  <div style="font-size: 0.78rem; font-weight: 800; color: #047857;">📏 Distance: ${p.distance}</div>
-                  <div style="font-size: 0.78rem; font-weight: 800; color: #047857;">⏱️ Travel Time: ${p.extraTime}</div>
-                  <div style="font-size: 0.74rem; color: #475569; margin-top: 2px;">🟢 Status: 100% Clear &amp; Safe Bypass</div>
+                  <div style="font-size: 0.78rem; font-weight: 800; color: #047857;">Distance: ${p.distance}</div>
+                  <div style="font-size: 0.78rem; font-weight: 800; color: #047857;">Travel Time: ${p.extraTime}</div>
+                  <div style="font-size: 0.74rem; color: #475569; margin-top: 2px; display: flex; align-items: center; gap: 4px;">
+                    <span style="display:inline-block; width:6px; height:6px; border-radius:50%; background:#10b981;"></span> Status: Safe Bypass Corridor
+                  </div>
                 </div>
                 <p style="margin: 0; font-size: 0.74rem; color: #64748b; line-height: 1.4;">
                   ${p.notes || 'Reinforced bypass corridor clear of active landslide drainage.'}
@@ -819,6 +905,11 @@ export default function CitizenPortal() {
             .addTo(map);
         });
 
+        map.on('error', (e) => {
+          // Log non-fatal tile warnings quietly without halting map render
+          console.warn('MapLibre map tile notice:', e);
+        });
+
         // Automatically draw initial alternate route on map load
         if (selectedRoad?.alternateRoute || ROADS_DATA[0]?.alternateRoute) {
           drawAltRoute(selectedRoad?.alternateRoute || ROADS_DATA[0].alternateRoute, map, false);
@@ -826,25 +917,46 @@ export default function CitizenPortal() {
 
         mapInstanceRef.current = map;
       } else {
+        const map = mapInstanceRef.current;
+        map.resize();
         setTimeout(() => {
-          if (mapInstanceRef.current) {
-            mapInstanceRef.current.resize();
-            mapInstanceRef.current.flyTo({ center: [selectedLocation.lng, selectedLocation.lat], zoom: 13 });
+          if (map) {
+            map.resize();
+            map.flyTo({ center: [selectedLocation.lng, selectedLocation.lat], zoom: 13.5, pitch: 50, bearing: 15, essential: true });
+            renderLocationMarkersAndZones(map, selectedLocation);
             if (selectedRoad?.alternateRoute) {
-              drawAltRoute(selectedRoad.alternateRoute, mapInstanceRef.current, false);
+              drawAltRoute(selectedRoad.alternateRoute, map, false);
             }
           }
-        }, 100);
+        }, 50);
       }
 
-      const timer = setTimeout(() => {
-        if (mapInstanceRef.current) {
-          mapInstanceRef.current.resize();
-        }
+      // Attach ResizeObserver to container to handle tab switches, CSS animations, and window resizing
+      let resizeObserver = null;
+      if (mapContainerRef.current && typeof ResizeObserver !== 'undefined') {
+        resizeObserver = new ResizeObserver(() => {
+          if (mapInstanceRef.current) {
+            mapInstanceRef.current.resize();
+          }
+        });
+        resizeObserver.observe(mapContainerRef.current);
+      }
+
+      const t1 = setTimeout(() => {
+        if (mapInstanceRef.current) mapInstanceRef.current.resize();
+      }, 100);
+      const t2 = setTimeout(() => {
+        if (mapInstanceRef.current) mapInstanceRef.current.resize();
       }, 300);
+      const t3 = setTimeout(() => {
+        if (mapInstanceRef.current) mapInstanceRef.current.resize();
+      }, 600);
 
       return () => {
-        clearTimeout(timer);
+        if (resizeObserver) resizeObserver.disconnect();
+        clearTimeout(t1);
+        clearTimeout(t2);
+        clearTimeout(t3);
       };
     }
   }, [activeTab, selectedLocation]);
@@ -896,20 +1008,236 @@ export default function CitizenPortal() {
     }
   };
 
+  // Calculate bearing angle between two points for 3D map heading
+  const calcHeadingBearing = (p1, p2) => {
+    if (!p1 || !p2) return 0;
+    const dLon = (p2[1] - p1[1]) * Math.PI / 180;
+    const lat1 = p1[0] * Math.PI / 180;
+    const lat2 = p2[0] * Math.PI / 180;
+    const y = Math.sin(dLon) * Math.cos(lat2);
+    const x = Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLon);
+    return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
+  };
+
+  // Speak navigation maneuver instruction using SpeechSynthesis
+  const speakManeuver = (text) => {
+    try {
+      if ('speechSynthesis' in window && voiceGuidanceEnabled) {
+        window.speechSynthesis.cancel();
+        const ut = new SpeechSynthesisUtterance(text);
+        ut.rate = 0.95;
+        ut.pitch = 1.0;
+        if (lang === 'hi') ut.lang = 'hi-IN';
+        window.speechSynthesis.speak(ut);
+      }
+    } catch (e) {}
+  };
+
+  // Open Turn-by-Turn Google Maps style directions modal
+  const handleOpenDirections = (route, autoStartSim = false) => {
+    const targetRoute = route || (selectedRoad && selectedRoad.alternateRoute) || ROADS_DATA[0].alternateRoute;
+    if (!targetRoute) return;
+    
+    setNavRoute(targetRoute);
+    setActiveAltRoute(targetRoute);
+
+    // Calculate Estimated Arrival Time
+    const now = new Date();
+    const durationMins = parseInt(String(targetRoute.duration || '18 mins').replace(/\D/g, ''), 10) || 18;
+    now.setMinutes(now.getMinutes() + durationMins);
+    const etaStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    setNavEtaText(etaStr);
+    setNavRemainingDistance(targetRoute.distance || '12.4 km');
+    setNavRemainingTime(targetRoute.duration || `${durationMins} mins`);
+
+    // Switch to Map tab and draw route
+    setActiveTab('map');
+    setShowDirectionsModal(true);
+
+    setTimeout(() => {
+      if (mapInstanceRef.current) {
+        drawAltRoute(targetRoute, mapInstanceRef.current, true);
+      }
+    }, 150);
+
+    if (autoStartSim) {
+      setTimeout(() => {
+        handleStartSimNav(targetRoute);
+      }, 350);
+    }
+  };
+
+  // Start Simulated Live GPS Turn-by-Turn Navigation on 3D Map
+  const handleStartSimNav = (routeToNav = navRoute) => {
+    const activeRoute = routeToNav || navRoute || (selectedRoad && selectedRoad.alternateRoute) || ROADS_DATA[0].alternateRoute;
+    if (!activeRoute || !activeRoute.coords || activeRoute.coords.length < 2) return;
+
+    setShowDirectionsModal(false);
+    setIsSimulatingNav(true);
+    setCurrentNavStepIndex(0);
+    simCoordIndexRef.current = 0;
+
+    const map = mapInstanceRef.current;
+    if (!map) return;
+
+    // Draw route if not drawn
+    drawAltRoute(activeRoute, map, false);
+
+    // Remove existing vehicle marker
+    if (navVehicleMarkerRef.current) {
+      try { navVehicleMarkerRef.current.remove(); } catch (e) {}
+      navVehicleMarkerRef.current = null;
+    }
+
+    // Create Navigation Vehicle Marker (Pulsing Green Navigation Arrow / GPS Radar)
+    const carEl = document.createElement('div');
+    carEl.className = 'gmaps-nav-car-marker';
+    carEl.innerHTML = `
+      <div class="gmaps-nav-car-pulse"></div>
+      <div class="gmaps-nav-car-icon" id="gmapsNavCarIcon">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M12 2L4.5 20.29l.71.71L12 18l6.79 3 .71-.71z"/>
+        </svg>
+      </div>
+    `;
+
+    const startCoord = activeRoute.coords[0];
+    const nextCoord = activeRoute.coords[1];
+    const initialBearing = calcHeadingBearing(startCoord, nextCoord);
+
+    const vehicleMarker = new maplibregl.Marker({ element: carEl, rotationAlignment: 'map' })
+      .setLngLat([startCoord[1], startCoord[0]])
+      .addTo(map);
+
+    navVehicleMarkerRef.current = vehicleMarker;
+
+    // Smoothly Fly Map to First Step
+    map.flyTo({
+      center: [startCoord[1], startCoord[0]],
+      zoom: 16.5,
+      pitch: 60,
+      bearing: initialBearing,
+      essential: true
+    });
+
+    const firstStepText = activeRoute.steps && activeRoute.steps[0] ? (lang === 'hi' ? activeRoute.steps[0].instructionHi : activeRoute.steps[0].instruction) : `Head onto ${activeRoute.name}`;
+    speakManeuver(firstStepText);
+    showAppToast(`Navigation active: ${firstStepText}`);
+
+    // Simulation loop along polyline coordinates
+    if (simNavTimerRef.current) clearInterval(simNavTimerRef.current);
+
+    const coordsList = activeRoute.coords;
+    const totalPoints = coordsList.length;
+
+    simNavTimerRef.current = setInterval(() => {
+      simCoordIndexRef.current += 1;
+      const curIdx = simCoordIndexRef.current;
+
+      if (curIdx >= totalPoints) {
+        // Reached destination!
+        clearInterval(simNavTimerRef.current);
+        simNavTimerRef.current = null;
+        const lastStepIdx = (activeRoute.steps || []).length - 1;
+        setCurrentNavStepIndex(lastStepIdx);
+        const finishMsg = lang === 'hi' ? 'आप सुरक्षित आश्रय स्थल पर पहुंच चुके हैं।' : 'You have arrived at your designated safe evacuation destination.';
+        speakManeuver(finishMsg);
+        showAppToast(finishMsg);
+        return;
+      }
+
+      const pCurrent = coordsList[curIdx];
+      const pPrev = coordsList[curIdx - 1];
+      const bearing = calcHeadingBearing(pPrev, pCurrent);
+
+      // Move marker
+      if (navVehicleMarkerRef.current) {
+        navVehicleMarkerRef.current.setLngLat([pCurrent[1], pCurrent[0]]);
+        const iconEl = document.getElementById('gmapsNavCarIcon');
+        if (iconEl) {
+          iconEl.style.transform = `rotate(${bearing}deg)`;
+        }
+      }
+
+      // Fly map smoothly following vehicle
+      if (mapInstanceRef.current) {
+        mapInstanceRef.current.easeTo({
+          center: [pCurrent[1], pCurrent[0]],
+          bearing: bearing,
+          pitch: 60,
+          zoom: 16.5,
+          duration: 1200
+        });
+      }
+
+      // Update step index based on progress
+      const stepCount = (activeRoute.steps || []).length;
+      if (stepCount > 0) {
+        const stepIdx = Math.min(Math.floor((curIdx / totalPoints) * stepCount), stepCount - 1);
+        setCurrentNavStepIndex(prev => {
+          if (prev !== stepIdx) {
+            const nextStep = activeRoute.steps[stepIdx];
+            if (nextStep) {
+              const instr = lang === 'hi' ? nextStep.instructionHi : nextStep.instruction;
+              speakManeuver(instr);
+            }
+          }
+          return stepIdx;
+        });
+      }
+    }, 2400);
+  };
+
+  // Stop Simulated Navigation
+  const handleStopSimNav = () => {
+    if (simNavTimerRef.current) {
+      clearInterval(simNavTimerRef.current);
+      simNavTimerRef.current = null;
+    }
+    if (navVehicleMarkerRef.current) {
+      try { navVehicleMarkerRef.current.remove(); } catch (e) {}
+      navVehicleMarkerRef.current = null;
+    }
+    setIsSimulatingNav(false);
+    if ('speechSynthesis' in window) {
+      try { window.speechSynthesis.cancel(); } catch (e) {}
+    }
+    showAppToast('Exited Navigation Mode');
+  };
+
+  // Open Real Google Maps External Link
+  const handleOpenExternalGoogleMaps = (routeToOpen = navRoute) => {
+    const route = routeToOpen || navRoute || (selectedRoad && selectedRoad.alternateRoute) || ROADS_DATA[0].alternateRoute;
+    if (!route) return;
+    const orig = route.originCoords || (route.coords && route.coords[0]) || [selectedLocation.lat, selectedLocation.lng];
+    const dest = route.destinationCoords || (route.coords && route.coords[route.coords.length - 1]) || [selectedLocation.lat + 0.01, selectedLocation.lng + 0.01];
+    const url = `https://www.google.com/maps/dir/?api=1&origin=${orig[0]},${orig[1]}&destination=${dest[0]},${dest[1]}&travelmode=driving`;
+    window.open(url, '_blank', 'noopener,noreferrer');
+    showAppToast('Opening route in Google Maps app / web...');
+  };
+
+  // Click a step in directions to focus map
+  const handleFocusStep = (step, idx) => {
+    setCurrentNavStepIndex(idx);
+    if (step.coords && mapInstanceRef.current) {
+      mapInstanceRef.current.flyTo({
+        center: [step.coords[1], step.coords[0]],
+        zoom: 16.5,
+        pitch: 55,
+        essential: true
+      });
+    }
+    const instr = lang === 'hi' ? step.instructionHi : step.instruction;
+    speakManeuver(instr);
+  };
+
   // Apply alternate route on map with permanent bypass badge
   const handleApplyAlternateRoute = (road) => {
     const targetRoad = road || selectedRoad || ROADS_DATA[0];
     if (!targetRoad || !targetRoad.alternateRoute) return;
     const alt = targetRoad.alternateRoute;
     setSelectedRoad(targetRoad);
-    setActiveTab('map');
-
-    setTimeout(() => {
-      if (mapInstanceRef.current) {
-        drawAltRoute(alt, mapInstanceRef.current, true);
-        showAppToast(`Alternate Route active: ${alt.name} (${alt.distance} • ${alt.extraTime})`);
-      }
-    }, 200);
+    handleOpenDirections(alt);
   };
 
   // Toggle saving road to saved commutes
@@ -1606,30 +1934,110 @@ export default function CitizenPortal() {
                 <div className="map-basemap-switcher" id="mapBasemapSwitcher">
                   <button
                     type="button"
-                    className={`basemap-switcher-btn ${mapBasemap === 'osm' ? 'active' : ''}`}
-                    onClick={() => handleSwitchBasemap('osm')}
-                    title="Standard OpenStreetMap Streets & Urban Grid (Default)"
+                    className={`basemap-switcher-btn ${mapBasemap === 'satellite' ? 'active' : ''}`}
+                    onClick={() => handleSwitchBasemap('satellite')}
+                    title="Realistic High-Resolution Satellite Hybrid Imagery (Default)"
                   >
-                    🗺️ Streets
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+                    <span>Satellite Hybrid</span>
                   </button>
                   <button
                     type="button"
                     className={`basemap-switcher-btn ${mapBasemap === 'topo' ? 'active' : ''}`}
                     onClick={() => handleSwitchBasemap('topo')}
-                    title="Realistic Topographic Mountain Elevation & Contour Relief"
+                    title="Topographic Mountain Elevation & 3D Contour Relief"
                   >
-                    🏔️ Realistic Topo
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M8 3l4 8 5-5 5 15H2L8 3z"/></svg>
+                    <span>Topo Relief</span>
                   </button>
                   <button
                     type="button"
-                    className={`basemap-switcher-btn ${mapBasemap === 'hot' ? 'active' : ''}`}
-                    onClick={() => handleSwitchBasemap('hot')}
-                    title="Humanitarian Disaster Response Mapping"
+                    className={`basemap-switcher-btn ${mapBasemap === 'osm' ? 'active' : ''}`}
+                    onClick={() => handleSwitchBasemap('osm')}
+                    title="Standard Urban Street Grid"
                   >
-                    🚑 Disaster HOT
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/><line x1="9" y1="3" x2="9" y2="21"/><line x1="15" y1="3" x2="15" y2="21"/></svg>
+                    <span>Street Grid</span>
                   </button>
                 </div>
               </div>
+
+              {/* In-Drive Live Navigation HUD (Top & Bottom Overlays) */}
+              {isSimulatingNav && navRoute && (
+                <>
+                  <div className="gmaps-floating-hud-top">
+                    <div className="gmaps-hud-instruction-box">
+                      <div className="gmaps-hud-icon-wrap">
+                        {navRoute.steps && navRoute.steps[currentNavStepIndex] && navRoute.steps[currentNavStepIndex].icon === 'turn-right' ? (
+                          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6" /><path d="M4 12h11" /></svg>
+                        ) : navRoute.steps && navRoute.steps[currentNavStepIndex] && navRoute.steps[currentNavStepIndex].icon === 'turn-left' ? (
+                          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6" /><path d="M20 12H9" /></svg>
+                        ) : navRoute.steps && navRoute.steps[currentNavStepIndex] && navRoute.steps[currentNavStepIndex].icon === 'finish' ? (
+                          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></svg>
+                        ) : (
+                          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
+                        )}
+                      </div>
+                      <div className="gmaps-hud-text-wrap">
+                        <div className="gmaps-hud-sub">
+                          <span>In {navRoute.steps && navRoute.steps[currentNavStepIndex] ? navRoute.steps[currentNavStepIndex].distance : '150m'}</span>
+                          <span style={{ opacity: 0.7 }}>•</span>
+                          <span>Step {currentNavStepIndex + 1} of {(navRoute.steps || []).length}</span>
+                        </div>
+                        <div className="gmaps-hud-main">
+                          {navRoute.steps && navRoute.steps[currentNavStepIndex]
+                            ? (lang === 'hi' ? navRoute.steps[currentNavStepIndex].instructionHi : navRoute.steps[currentNavStepIndex].instruction)
+                            : navRoute.name}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="gmaps-hud-actions">
+                      <button
+                        type="button"
+                        className="btn-gmaps-hud-voice"
+                        onClick={() => {
+                          setVoiceGuidanceEnabled(!voiceGuidanceEnabled);
+                          showAppToast(voiceGuidanceEnabled ? 'Voice muted' : 'Voice guidance enabled');
+                        }}
+                        title={voiceGuidanceEnabled ? 'Voice Active' : 'Voice Muted'}
+                      >
+                        {voiceGuidanceEnabled ? (
+                          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>
+                        ) : (
+                          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/></svg>
+                        )}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn-gmaps-hud-exit"
+                        onClick={handleStopSimNav}
+                        title="Exit Navigation"
+                      >
+                        Exit
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="gmaps-floating-hud-bottom">
+                    <div className="gmaps-hud-bottom-info">
+                      <div className="gmaps-hud-bottom-eta">{navRoute.duration || '18 min'}</div>
+                      <div className="gmaps-hud-bottom-sub">
+                        <span>{navRoute.distance}</span>
+                        <span className="dot-sep">•</span>
+                        <span style={{ color: '#10b981', fontWeight: 700 }}>Optimal Safe Route</span>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      className="btn-gmaps-hud-steps"
+                      onClick={() => setShowDirectionsModal(true)}
+                    >
+                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+                      <span>Directions</span>
+                    </button>
+                  </div>
+                </>
+              )}
 
               {/* Bottom Right: Floating Quick Actions */}
               <div className="map-floating-tools">
@@ -1676,7 +2084,7 @@ export default function CitizenPortal() {
                     }
                   }}
                 >
-                  🏔️
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>
                 </button>
                 <button
                   type="button"
@@ -1773,24 +2181,44 @@ export default function CitizenPortal() {
                       <div className="alt-route-stats" id="inspectorAltStats" style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', margin: '6px 0' }}>
                         <span className="alt-stat-pill safe" id="inspectorAltStatus" style={{ padding: '3px 8px' }}>Open &amp; Safe</span>
                         <span style={{ background: '#dcfce7', color: '#166534', fontWeight: 800, padding: '3px 8px', borderRadius: '6px', fontSize: '0.76rem', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-                          📏 <strong>{selectedRoad.alternateRoute.distance}</strong>
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="2" y1="12" x2="22" y2="12"/><line x1="2" y1="6" x2="2" y2="18"/><line x1="22" y1="6" x2="22" y2="18"/></svg>
+                          <strong>{selectedRoad.alternateRoute.distance}</strong>
                         </span>
                         <span style={{ background: '#dcfce7', color: '#166534', fontWeight: 800, padding: '3px 8px', borderRadius: '6px', fontSize: '0.76rem', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-                          ⏱️ <strong>{selectedRoad.alternateRoute.extraTime}</strong>
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                          <strong>{selectedRoad.alternateRoute.extraTime}</strong>
                         </span>
                       </div>
 
                       <div className="alt-route-note" id="inspectorAltNote" style={{ fontSize: '0.74rem', color: '#475569', lineHeight: 1.4 }}>{selectedRoad.alternateRoute.notes}</div>
                       
-                      <button
-                        type="button"
-                        className="btn-activate-alt-route"
-                        id="btnInspectorApplyAlt"
-                        onClick={() => handleApplyAlternateRoute(selectedRoad)}
-                      >
-                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polygon points="3 11 22 2 13 21 11 13 3 11" /></svg>
-                        <span>Show &amp; Focus Alternate Route on Map</span>
-                      </button>
+                      <div style={{ display: 'flex', gap: '8px', marginTop: '10px' }}>
+                        <button
+                          type="button"
+                          className="btn-activate-alt-route"
+                          id="btnInspectorDirectionsAlt"
+                          style={{ flex: 1.3, background: '#137333', borderColor: '#0f5c29', color: '#ffffff', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '6px', padding: '9px 12px', borderRadius: '10px', fontSize: '0.8rem', fontWeight: 800, cursor: 'pointer' }}
+                          onClick={() => handleOpenDirections(selectedRoad.alternateRoute)}
+                        >
+                          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polygon points="3 11 22 2 13 21 11 13 3 11"/></svg>
+                          <span>Get Directions</span>
+                        </button>
+                        <button
+                          type="button"
+                          className="btn-activate-alt-route"
+                          id="btnInspectorApplyAlt"
+                          style={{ flex: 0.8, background: '#f1f5f9', color: '#1e293b', border: '1px solid #cbd5e1', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '5px', padding: '9px 10px', borderRadius: '10px', fontSize: '0.78rem', fontWeight: 700, cursor: 'pointer' }}
+                          onClick={() => {
+                            if (mapInstanceRef.current && selectedRoad.alternateRoute) {
+                              drawAltRoute(selectedRoad.alternateRoute, mapInstanceRef.current, true);
+                              showAppToast(`Focused: ${selectedRoad.alternateRoute.name}`);
+                            }
+                          }}
+                        >
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polygon points="3 11 22 2 13 21 11 13 3 11" /></svg>
+                          <span>Show Map</span>
+                        </button>
+                      </div>
                     </div>
                   ) : (
                     <div className="inspector-no-alt-box" id="inspectorNoAltBox">
@@ -3381,6 +3809,178 @@ export default function CitizenPortal() {
               <div style={{ textAlign: 'center', fontSize: '0.7rem', color: '#64748b' }}>
                 {t.popupAcknowledgeSub || 'Silences alarm and confirms your safety with Disaster Control'}
               </div>
+            </div>
+
+          </div>
+        </div>
+      )}
+
+      {/* =========================================================================
+           GOOGLE MAPS STYLE TURN-BY-TURN DIRECTIONS MODAL
+           ========================================================================= */}
+      {/* =========================================================================
+           GOOGLE MAPS STYLE TURN-BY-TURN DIRECTIONS MODAL
+           ========================================================================= */}
+      {showDirectionsModal && navRoute && (
+        <div className="gmaps-nav-backdrop" onClick={() => setShowDirectionsModal(false)}>
+          <div className="gmaps-nav-modal" onClick={(e) => e.stopPropagation()}>
+            
+            {/* Green Header */}
+            <div className="gmaps-header">
+              <div className="gmaps-header-top">
+                <div className="gmaps-header-brand">
+                  <span className="gmaps-brand-icon" style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '26px', height: '26px', background: 'rgba(255,255,255,0.2)', borderRadius: '6px', color: '#ffffff' }}>
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polygon points="3 11 22 2 13 21 11 13 3 11"/></svg>
+                  </span>
+                  <span className="gmaps-logo-pill">Safe Navigation Route</span>
+                </div>
+                <button
+                  type="button"
+                  className="gmaps-close-btn"
+                  onClick={() => setShowDirectionsModal(false)}
+                  title="Close Directions"
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+              </div>
+
+              <h2 className="gmaps-route-headline">
+                {lang === 'hi' ? (navRoute.nameHi || navRoute.name) : navRoute.name}
+              </h2>
+
+              <div className="gmaps-route-meta-pills">
+                <span className="gmaps-meta-pill highlight">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                  <span>{navRoute.duration || '18 mins'} ({navRoute.distance})</span>
+                </span>
+                <span className="gmaps-meta-pill">
+                  <span className="gmaps-status-indicator-dot" style={{ display: 'inline-block', width: '7px', height: '7px', borderRadius: '50%', background: '#4ade80' }}></span>
+                  <span>{navRoute.status || 'Open & Clear'}</span>
+                </span>
+                <span className="gmaps-meta-pill">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                  <span>Avoids Landslide Debris</span>
+                </span>
+              </div>
+            </div>
+
+            {/* Origin -> Destination Card */}
+            <div className="gmaps-origin-dest-card">
+              <div className="gmaps-point-row">
+                <div className="gmaps-point-dot origin"></div>
+                <div className="gmaps-point-line"></div>
+                <div className="gmaps-point-text">
+                  <div className="gmaps-point-label">Origin (Your Current GPS Sector)</div>
+                  <div>{lang === 'hi' ? (navRoute.originHi || navRoute.origin || selectedLocation.nameHi || selectedLocation.name) : (navRoute.origin || selectedLocation.name)}</div>
+                </div>
+              </div>
+
+              <div className="gmaps-point-row">
+                <div className="gmaps-point-dot destination"></div>
+                <div className="gmaps-point-text">
+                  <div className="gmaps-point-label">Safe Destination</div>
+                  <div>{lang === 'hi' ? (navRoute.destinationHi || navRoute.destination || 'शिलांग सुरक्षित राहत केंद्र') : (navRoute.destination || 'Designated Safe Evacuation Shelter')}</div>
+                </div>
+              </div>
+            </div>
+
+            {/* Action Bar */}
+            <div className="gmaps-actions-bar">
+              <button
+                type="button"
+                className={`btn-gmaps-start-nav ${isSimulatingNav ? 'active' : ''}`}
+                onClick={() => {
+                  if (isSimulatingNav) {
+                    handleStopSimNav();
+                  } else {
+                    handleStartSimNav(navRoute);
+                  }
+                }}
+              >
+                {isSimulatingNav ? (
+                  <>
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" /></svg>
+                    <span>Stop Navigation</span>
+                  </>
+                ) : (
+                  <>
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3" /></svg>
+                    <span>Start 3D Simulated Navigation</span>
+                  </>
+                )}
+              </button>
+
+              <button
+                type="button"
+                className="btn-gmaps-open-ext"
+                onClick={() => handleOpenExternalGoogleMaps(navRoute)}
+                title="Open in real Google Maps app / web"
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" /><polyline points="15 3 21 3 21 9" /><line x1="10" y1="14" x2="21" y2="3" /></svg>
+                <span>Open in Google Maps</span>
+              </button>
+
+              <button
+                type="button"
+                className={`btn-gmaps-voice-toggle ${voiceGuidanceEnabled ? 'active' : ''}`}
+                onClick={() => {
+                  setVoiceGuidanceEnabled(!voiceGuidanceEnabled);
+                  showAppToast(voiceGuidanceEnabled ? 'Voice muted' : 'Voice guidance enabled');
+                }}
+                title={voiceGuidanceEnabled ? 'Voice guidance active' : 'Voice guidance muted'}
+              >
+                {voiceGuidanceEnabled ? (
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>
+                ) : (
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/></svg>
+                )}
+              </button>
+            </div>
+
+            {/* Turn-by-Turn Steps List */}
+            <div className="gmaps-steps-container">
+              <div className="gmaps-steps-header">Turn-by-Turn Step Directions (Click any step to inspect waypoint)</div>
+              
+              {(navRoute.steps || []).map((step, idx) => {
+                const isActive = idx === currentNavStepIndex;
+                return (
+                  <div
+                    key={step.id || idx}
+                    className={`gmaps-step-item ${isActive ? 'active' : ''}`}
+                    onClick={() => handleFocusStep(step, idx)}
+                  >
+                    <div className="gmaps-step-icon-wrap">
+                      {step.icon === 'turn-right' ? (
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6" /><path d="M4 12h11" /></svg>
+                      ) : step.icon === 'turn-left' ? (
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6" /><path d="M20 12H9" /></svg>
+                      ) : step.icon === 'finish' ? (
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></svg>
+                      ) : (
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
+                      )}
+                    </div>
+
+                    <div className="gmaps-step-content">
+                      <div className="gmaps-step-main">
+                        <div className="gmaps-step-instruction">
+                          {lang === 'hi' ? step.instructionHi : step.instruction}
+                        </div>
+                        <div className="gmaps-step-distance-time">
+                          {step.distance} • {step.time}
+                        </div>
+                      </div>
+
+                      {step.advisory && (
+                        <div className="gmaps-step-advisory">
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                          <span>{step.advisory}</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
 
           </div>

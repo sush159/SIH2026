@@ -38,12 +38,6 @@ export default function AdminPortal() {
   const [arduinoConnected, setArduinoConnected] = useState(false);
   const [clockTime, setClockTime] = useState('');
 
-  // Map Refs
-  const overviewMapRef = useRef(null);
-  const overviewMapInstanceRef = useRef(null);
-  const zoneMapRef = useRef(null);
-  const zoneMapInstanceRef = useRef(null);
-
   const zoneData = ZONES_DATABASE[selectedZoneKey] || ZONES_DATABASE['shillong-meghalaya'];
 
   const showOperationalToast = (msg) => {
@@ -67,56 +61,75 @@ export default function AdminPortal() {
 
   // Real-time listener for Citizen alarm silence / acknowledgement responses
   useEffect(() => {
+    const processCitizenPayload = (payload) => {
+      if (!payload) return;
+      setCitizenEvacuations(prev => {
+        const exists = prev.some(c => c.id === payload.citizenId);
+        if (exists) {
+          return prev.map(c => {
+            if (c.id === payload.citizenId) {
+              return {
+                ...c,
+                alarmStatus: payload.status === 'unresponsive' ? 'not_turned_off' : 'turned_off',
+                status: payload.status,
+                actionText: payload.actionText || 'Alarm Turned Off (Silenced)',
+                ringingDuration: 'Silenced Live',
+                lastUpdate: 'Just now',
+                shelterTarget: payload.shelterTarget || c.shelterTarget
+              };
+            }
+            return c;
+          });
+        } else {
+          return [
+            {
+              id: payload.citizenId || `CIT-LIVE-${Date.now().toString().slice(-4)}`,
+              name: payload.name || 'Resident App User (Live)',
+              phone: payload.phone || '+91 98765-LIVE-APP',
+              zone: payload.zone || 'Shillong Urban Ridge',
+              location: payload.location || 'Urban Sector',
+              alarmStatus: payload.status === 'unresponsive' ? 'not_turned_off' : 'turned_off',
+              status: payload.status || 'evacuating',
+              actionText: payload.actionText || 'Alarm Turned Off (Silenced)',
+              ringingDuration: 'Silenced Live',
+              lastUpdate: 'Just now',
+              shelterTarget: payload.shelterTarget || 'Shillong Polo Ground Camp #1',
+              evacRoute: 'Primary Evacuation Link',
+              officerDispatched: false,
+              assignedOfficer: null
+            },
+            ...prev
+          ];
+        }
+      });
+      showOperationalToast(`Citizen Response: ${payload.name} — ${payload.actionText || 'Status Updated'}`);
+    };
+
+    let bc;
+    try {
+      if (typeof BroadcastChannel !== 'undefined') {
+        bc = new BroadcastChannel('resilientguard_admin_alerts');
+        bc.onmessage = (e) => {
+          if (e.data && e.data.type === 'CITIZEN_ALARM_RESPONSE') {
+            processCitizenPayload(e.data);
+          }
+        };
+      }
+    } catch (err) {}
+
     const handleStorageChange = (e) => {
       if (e.key === 'resilientguard_citizen_response' && e.newValue) {
         try {
-          const payload = JSON.parse(e.newValue);
-          setCitizenEvacuations(prev => {
-            const exists = prev.some(c => c.id === payload.citizenId);
-            if (exists) {
-              return prev.map(c => {
-                if (c.id === payload.citizenId) {
-                  return {
-                    ...c,
-                    alarmStatus: payload.status === 'unresponsive' ? 'not_turned_off' : 'turned_off',
-                    status: payload.status,
-                    actionText: payload.actionText || 'Alarm Turned Off (Silenced)',
-                    ringingDuration: 'Silenced Live',
-                    lastUpdate: 'Just now',
-                    shelterTarget: payload.shelterTarget || c.shelterTarget
-                  };
-                }
-                return c;
-              });
-            } else {
-              return [
-                {
-                  id: payload.citizenId || `CIT-LIVE-${Date.now().toString().slice(-4)}`,
-                  name: payload.name || 'Resident App User (Live)',
-                  phone: payload.phone || '+91 98765-LIVE-APP',
-                  zone: payload.zone || 'Shillong Urban Ridge',
-                  location: payload.location || 'Urban Sector',
-                  alarmStatus: payload.status === 'unresponsive' ? 'not_turned_off' : 'turned_off',
-                  status: payload.status || 'evacuating',
-                  actionText: payload.actionText || 'Alarm Turned Off (Silenced)',
-                  ringingDuration: 'Silenced Live',
-                  lastUpdate: 'Just now',
-                  shelterTarget: payload.shelterTarget || 'Shillong Polo Ground Camp #1',
-                  evacRoute: 'Primary Evacuation Link',
-                  officerDispatched: false,
-                  assignedOfficer: null
-                },
-                ...prev
-              ];
-            }
-          });
-          showOperationalToast(`Citizen Response: ${payload.name} has turned off the alarm siren`);
+          processCitizenPayload(JSON.parse(e.newValue));
         } catch (err) {}
       }
     };
 
     window.addEventListener('storage', handleStorageChange);
-    return () => window.removeEventListener('storage', handleStorageChange);
+    return () => {
+      if (bc) bc.close();
+      window.removeEventListener('storage', handleStorageChange);
+    };
   }, []);
 
   // Dispatch Field Officer Physical Rescue for Unresponsive Citizens
@@ -237,6 +250,17 @@ export default function AdminPortal() {
     return matchFilter && matchSearch;
   });
 
+  // Map Refs
+  const overviewMapRef = useRef(null);
+  const overviewMapInstanceRef = useRef(null);
+  const overviewMarkersRef = useRef([]);
+  const zoneMapRef = useRef(null);
+  const zoneMapInstanceRef = useRef(null);
+  const tacticalMarkersRef = useRef([]);
+
+
+
+  // Filter Dispatched Alerts
   const filteredHistory = dispatchedAlerts.filter(a => {
     const zoneName = (a.zone || a.zoneName || '').toLowerCase();
     const ref = (a.refId || '').toLowerCase();
@@ -246,7 +270,13 @@ export default function AdminPortal() {
   // Overview Map Initialization (Page 1)
   useEffect(() => {
     if (activePage === 'page1' && overviewMapRef.current) {
-      if (!overviewMapInstanceRef.current) {
+      const containerHasCanvas = overviewMapRef.current.querySelector('.maplibregl-canvas');
+      if (!overviewMapInstanceRef.current || !containerHasCanvas) {
+        if (overviewMapInstanceRef.current) {
+          try { overviewMapInstanceRef.current.remove(); } catch (e) {}
+          overviewMapInstanceRef.current = null;
+        }
+
         const zoneFeatures = Object.keys(ZONES_DATABASE).map(key => {
           const z = ZONES_DATABASE[key];
           const isCritical = z.severity === 'critical';
@@ -257,7 +287,7 @@ export default function AdminPortal() {
               name: z.name,
               finalRisk: z.finalRisk,
               color: isCritical ? '#dc2626' : (z.severity === 'high' ? '#ea580c' : '#d97706'),
-              fillOpacity: isCritical ? 0.35 : 0.25
+              fillOpacity: isCritical ? 0.38 : 0.28
             },
             geometry: {
               type: 'Polygon',
@@ -271,15 +301,16 @@ export default function AdminPortal() {
           style: {
             version: 8,
             sources: {
-              'topo-tiles': {
+              'satellite-tiles': {
                 type: 'raster',
                 tiles: [
-                  'https://a.tile.opentopomap.org/{z}/{x}/{y}.png',
-                  'https://b.tile.opentopomap.org/{z}/{x}/{y}.png',
-                  'https://c.tile.opentopomap.org/{z}/{x}/{y}.png'
+                  'https://mt0.google.com/vt/lyrs=y&x={x}&y={y}&z={z}',
+                  'https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}',
+                  'https://mt2.google.com/vt/lyrs=y&x={x}&y={y}&z={z}',
+                  'https://mt3.google.com/vt/lyrs=y&x={x}&y={y}&z={z}'
                 ],
                 tileSize: 256,
-                attribution: '&copy; OpenTopoMap contributors'
+                attribution: '&copy; Google Satellite'
               },
               'overview-zones-source': {
                 type: 'geojson',
@@ -291,11 +322,11 @@ export default function AdminPortal() {
             },
             layers: [
               {
-                id: 'topo-layer',
+                id: 'overview-satellite-layer',
                 type: 'raster',
-                source: 'topo-tiles',
+                source: 'satellite-tiles',
                 minzoom: 0,
-                maxzoom: 17
+                maxzoom: 20
               },
               {
                 id: 'overview-zones-fill',
@@ -312,20 +343,23 @@ export default function AdminPortal() {
                 source: 'overview-zones-source',
                 paint: {
                   'line-color': ['get', 'color'],
-                  'line-width': 3,
+                  'line-width': 3.5,
                   'line-dasharray': [3, 2]
                 }
               }
             ]
           },
-          center: [92.9, 26.2],
+          center: [92.5, 25.8],
           zoom: 7,
           pitch: 35,
-          bearing: 5,
+          bearing: 0,
           attributionControl: false
         });
 
-        // Add Zone Pinpoint Markers
+        // Add Zone Pinpoint Markers with pulsing radar dot
+        overviewMarkersRef.current.forEach(m => m.remove());
+        overviewMarkersRef.current = [];
+
         Object.keys(ZONES_DATABASE).forEach(key => {
           const z = ZONES_DATABASE[key];
           const isCritical = z.severity === 'critical';
@@ -333,21 +367,26 @@ export default function AdminPortal() {
 
           const el = document.createElement('div');
           el.className = 'admin-map-zone-marker';
-          el.style.cssText = `width: 14px; height: 14px; border-radius: 50%; background: ${color}; border: 2.5px solid #ffffff; box-shadow: 0 0 10px ${color}; cursor: pointer;`;
+          el.style.cssText = `width: 18px; height: 18px; border-radius: 50%; background: ${color}; border: 3px solid #ffffff; box-shadow: 0 0 14px ${color}, 0 2px 6px rgba(0,0,0,0.4); cursor: pointer; display:flex; align-items:center; justify-content:center;`;
           el.onclick = () => setSelectedZoneModal({ key, ...z });
 
           const popup = new maplibregl.Popup({ offset: 12 }).setHTML(`
-            <div style="font-family: 'Plus Jakarta Sans', sans-serif; font-size: 0.82rem; padding: 4px;">
-              <strong style="color:${color};">${z.name}</strong><br/>
-              <span>Risk: <strong>${z.finalRisk}</strong></span><br/>
-              <span style="font-size:0.75rem; color:#2563eb; font-weight:700;">Click for Hazard Dossier</span>
+            <div style="font-family: 'Plus Jakarta Sans', sans-serif; font-size: 0.84rem; padding: 4px; min-width: 190px;">
+              <div style="display:flex; align-items:center; gap:6px; margin-bottom:3px;">
+                <span style="display:inline-block; width:9px; height:9px; border-radius:50%; background:${color}; box-shadow:0 0 6px ${color};"></span>
+                <strong style="color:${color}; font-size:0.88rem;">${z.name.split(' (')[0]}</strong>
+              </div>
+              <div>Risk Score: <strong>${z.finalRisk}</strong></div>
+              <div style="font-size:0.74rem; color:#64748b; margin-top:2px;">${z.severityText}</div>
+              <div style="margin-top:5px; font-size:0.75rem; color:#2563eb; font-weight:700;">Click to Open Hazard Dossier →</div>
             </div>
           `);
 
-          new maplibregl.Marker({ element: el })
+          const m = new maplibregl.Marker({ element: el })
             .setLngLat([z.center[1], z.center[0]])
             .setPopup(popup)
             .addTo(map);
+          overviewMarkersRef.current.push(m);
         });
 
         // Click on Overview Zone Polygons to open Danger Zone details
@@ -362,58 +401,129 @@ export default function AdminPortal() {
         map.on('mouseenter', 'overview-zones-fill', () => {
           map.getCanvas().style.cursor = 'pointer';
         });
-        map.on('mouseleave', 'overview-zones-fill', () => {
-          map.getCanvas().style.cursor = '';
+        map.on('load', () => {
+          map.resize();
+        });
+
+        map.on('error', (e) => {
+          console.warn('Admin overview map notice:', e);
         });
 
         overviewMapInstanceRef.current = map;
       } else {
+        const map = overviewMapInstanceRef.current;
+        map.resize();
         setTimeout(() => {
           if (overviewMapInstanceRef.current) {
             overviewMapInstanceRef.current.resize();
           }
-        }, 100);
+        }, 50);
       }
+
+      let resizeObserver = null;
+      if (overviewMapRef.current && typeof ResizeObserver !== 'undefined') {
+        resizeObserver = new ResizeObserver(() => {
+          if (overviewMapInstanceRef.current) {
+            overviewMapInstanceRef.current.resize();
+          }
+        });
+        resizeObserver.observe(overviewMapRef.current);
+      }
+
+      const t1 = setTimeout(() => {
+        if (overviewMapInstanceRef.current) overviewMapInstanceRef.current.resize();
+      }, 100);
+      const t2 = setTimeout(() => {
+        if (overviewMapInstanceRef.current) overviewMapInstanceRef.current.resize();
+      }, 300);
+      const t3 = setTimeout(() => {
+        if (overviewMapInstanceRef.current) overviewMapInstanceRef.current.resize();
+      }, 600);
+
+      return () => {
+        if (resizeObserver) resizeObserver.disconnect();
+        clearTimeout(t1);
+        clearTimeout(t2);
+        clearTimeout(t3);
+      };
     }
   }, [activePage]);
+
+  // Tactical Zone Map Helper to render sensor nodes
+  const renderTacticalSensors = (map, currentZone) => {
+    tacticalMarkersRef.current.forEach(m => {
+      try { m.remove(); } catch (e) {}
+    });
+    tacticalMarkersRef.current = [];
+
+    (currentZone.sensors || []).forEach(s => {
+      const el = document.createElement('div');
+      el.className = 'admin-sensor-marker';
+      const sColor = s.color || '#38bdf8';
+      el.style.cssText = `width: 24px; height: 24px; border-radius: 50%; background: ${sColor}; border: 2.5px solid #ffffff; box-shadow: 0 0 12px ${sColor}; cursor: pointer; display: flex; align-items: center; justify-content: center; color: white; font-weight: 800; font-size: 10px;`;
+      el.innerHTML = s.type === 'tilt' ? 'T' : (s.type === 'rain' ? 'R' : (s.type === 'soil' ? 'S' : 'G'));
+
+      const popup = new maplibregl.Popup({ offset: 14 }).setHTML(`
+        <div style="font-family: 'Plus Jakarta Sans', sans-serif; font-size: 0.82rem; padding: 4px; min-width: 200px;">
+          <div style="font-size:0.7rem; font-weight:800; color:${sColor}; text-transform:uppercase;">IoT Sensor Node</div>
+          <strong style="color:#0f172a; font-size:0.86rem;">${s.name}</strong><br/>
+          <div style="background:#f1f5f9; padding:5px 8px; border-radius:4px; margin-top:4px; font-size:0.75rem;">
+            <strong>Telemetry:</strong> ${s.val}
+          </div>
+        </div>
+      `);
+
+      const marker = new maplibregl.Marker({ element: el })
+        .setLngLat([s.pos[1], s.pos[0]])
+        .setPopup(popup)
+        .addTo(map);
+      tacticalMarkersRef.current.push(marker);
+    });
+  };
 
   // Tactical Zone Map Initialization (Page 2)
   useEffect(() => {
     if (activePage === 'page2' && zoneMapRef.current) {
-      if (!zoneMapInstanceRef.current) {
-        const polyCoords = zoneData.polygon.map(c => [c[1], c[0]]);
-        const isCrit = zoneData.severity === 'critical';
-        const sevColor = isCrit ? '#dc2626' : '#ea580c';
+      const polyCoords = zoneData.polygon.map(c => [c[1], c[0]]);
+      const isCrit = zoneData.severity === 'critical';
+      const sevColor = isCrit ? '#dc2626' : '#ea580c';
 
-        const tacticalRoadFeatures = (zoneData.roads || []).map((r, idx) => ({
-          type: 'Feature',
-          properties: {
-            id: `tactical-road-${idx}`,
-            name: r.name,
-            status: r.status,
-            statusText: r.statusText,
-            color: r.status === 'blocked' ? '#dc2626' : (r.status === 'restricted' ? '#ea580c' : '#16a34a')
-          },
-          geometry: {
-            type: 'LineString',
-            coordinates: (r.coords || []).map(c => [c[1], c[0]])
-          }
-        }));
+      const tacticalRoadFeatures = (zoneData.roads || []).map((r, idx) => ({
+        type: 'Feature',
+        properties: {
+          id: `tactical-road-${idx}`,
+          name: r.name,
+          status: r.status,
+          statusText: r.statusText,
+          color: r.status === 'blocked' ? '#dc2626' : (r.status === 'restricted' ? '#ea580c' : '#16a34a')
+        },
+        geometry: {
+          type: 'LineString',
+          coordinates: (r.coords || []).map(c => [c[1], c[0]])
+        }
+      }));
 
+      const containerHasCanvas = zoneMapRef.current.querySelector('.maplibregl-canvas');
+      if (!zoneMapInstanceRef.current || !containerHasCanvas) {
+        if (zoneMapInstanceRef.current) {
+          try { zoneMapInstanceRef.current.remove(); } catch (e) {}
+          zoneMapInstanceRef.current = null;
+        }
         const map = new maplibregl.Map({
           container: zoneMapRef.current,
           style: {
             version: 8,
             sources: {
-              'topo-tiles': {
+              'satellite-tiles': {
                 type: 'raster',
                 tiles: [
-                  'https://a.tile.opentopomap.org/{z}/{x}/{y}.png',
-                  'https://b.tile.opentopomap.org/{z}/{x}/{y}.png',
-                  'https://c.tile.opentopomap.org/{z}/{x}/{y}.png'
+                  'https://mt0.google.com/vt/lyrs=y&x={x}&y={y}&z={z}',
+                  'https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}',
+                  'https://mt2.google.com/vt/lyrs=y&x={x}&y={y}&z={z}',
+                  'https://mt3.google.com/vt/lyrs=y&x={x}&y={y}&z={z}'
                 ],
                 tileSize: 256,
-                attribution: '&copy; OpenTopoMap contributors'
+                attribution: '&copy; Google Satellite'
               },
               'tactical-perimeter-source': {
                 type: 'geojson',
@@ -445,11 +555,11 @@ export default function AdminPortal() {
             },
             layers: [
               {
-                id: 'tactical-topo-layer',
+                id: 'tactical-satellite-layer',
                 type: 'raster',
-                source: 'topo-tiles',
+                source: 'satellite-tiles',
                 minzoom: 0,
-                maxzoom: 17
+                maxzoom: 20
               },
               {
                 id: 'tactical-perimeter-fill',
@@ -457,7 +567,7 @@ export default function AdminPortal() {
                 source: 'tactical-perimeter-source',
                 paint: {
                   'fill-color': ['get', 'color'],
-                  'fill-opacity': 0.35
+                  'fill-opacity': 0.38
                 }
               },
               {
@@ -466,8 +576,19 @@ export default function AdminPortal() {
                 source: 'tactical-perimeter-source',
                 paint: {
                   'line-color': ['get', 'color'],
-                  'line-width': 3.5,
+                  'line-width': 4,
                   'line-dasharray': [3, 2]
+                }
+              },
+              {
+                id: 'tactical-roads-glow',
+                type: 'line',
+                source: 'tactical-roads-source',
+                paint: {
+                  'line-color': ['get', 'color'],
+                  'line-width': 12,
+                  'line-opacity': 0.35,
+                  'line-blur': 3
                 }
               },
               {
@@ -477,7 +598,7 @@ export default function AdminPortal() {
                 paint: {
                   'line-color': ['get', 'color'],
                   'line-width': 5.5,
-                  'line-opacity': 0.92
+                  'line-opacity': 0.95
                 }
               }
             ]
@@ -489,25 +610,9 @@ export default function AdminPortal() {
           attributionControl: false
         });
 
-        // Add Markers for IoT Sensors
-        (zoneData.sensors || []).forEach(s => {
-          const el = document.createElement('div');
-          el.className = 'admin-sensor-marker';
-          const sColor = s.color || '#38bdf8';
-          el.style.cssText = `width: 22px; height: 22px; border-radius: 50%; background: ${sColor}; border: 2px solid #ffffff; box-shadow: 0 0 10px ${sColor}; cursor: pointer; display: flex; align-items: center; justify-content: center; color: white; font-weight: 800; font-size: 10px;`;
-          el.innerHTML = s.type === 'tilt' ? 'T' : (s.type === 'rain' ? 'R' : (s.type === 'soil' ? 'S' : 'G'));
-
-          const popup = new maplibregl.Popup({ offset: 12 }).setHTML(`
-            <div style="font-family: 'Plus Jakarta Sans', sans-serif; font-size: 0.8rem; padding: 4px;">
-              <strong style="color:${sColor};">${s.name}</strong><br/>
-              <span>Telemetry: ${s.val}</span>
-            </div>
-          `);
-
-          new maplibregl.Marker({ element: el })
-            .setLngLat([s.pos[1], s.pos[0]])
-            .setPopup(popup)
-            .addTo(map);
+        map.on('load', () => {
+          map.resize();
+          renderTacticalSensors(map, zoneData);
         });
 
         // Click on Road Corridors to open Road Blockade & Bypass Dossier
@@ -530,33 +635,77 @@ export default function AdminPortal() {
         map.on('click', 'tactical-perimeter-fill', () => {
           setSelectedZoneModal({ key: selectedZoneKey, ...zoneData });
         });
+        map.on('mouseenter', 'tactical-perimeter-fill', () => {
+          map.getCanvas().style.cursor = 'pointer';
+        });
+        map.on('error', (e) => {
+          console.warn('Admin tactical map notice:', e);
+        });
 
         zoneMapInstanceRef.current = map;
       } else {
-        const perimSource = zoneMapInstanceRef.current.getSource('tactical-perimeter-source');
+        const map = zoneMapInstanceRef.current;
+        const perimSource = map.getSource('tactical-perimeter-source');
         if (perimSource) {
-          const polyCoords = zoneData.polygon.map(c => [c[1], c[0]]);
-          const isCrit = zoneData.severity === 'critical';
           perimSource.setData({
             type: 'FeatureCollection',
             features: [{
               type: 'Feature',
-              properties: { name: zoneData.name, finalRisk: zoneData.finalRisk, color: isCrit ? '#dc2626' : '#ea580c' },
+              properties: { name: zoneData.name, finalRisk: zoneData.finalRisk, color: sevColor },
               geometry: { type: 'Polygon', coordinates: [polyCoords] }
             }]
           });
         }
 
+        const roadsSource = map.getSource('tactical-roads-source');
+        if (roadsSource) {
+          roadsSource.setData({
+            type: 'FeatureCollection',
+            features: tacticalRoadFeatures
+          });
+        }
+
+        renderTacticalSensors(map, zoneData);
+
+        map.resize();
         setTimeout(() => {
-          zoneMapInstanceRef.current.resize();
-          zoneMapInstanceRef.current.flyTo({
+          map.resize();
+          map.flyTo({
             center: [zoneData.center[1], zoneData.center[0]],
             zoom: zoneData.zoom || 14.5,
             pitch: 55,
-            bearing: 20
+            bearing: 20,
+            essential: true
           });
-        }, 100);
+        }, 50);
       }
+
+      let resizeObserver = null;
+      if (zoneMapRef.current && typeof ResizeObserver !== 'undefined') {
+        resizeObserver = new ResizeObserver(() => {
+          if (zoneMapInstanceRef.current) {
+            zoneMapInstanceRef.current.resize();
+          }
+        });
+        resizeObserver.observe(zoneMapRef.current);
+      }
+
+      const t1 = setTimeout(() => {
+        if (zoneMapInstanceRef.current) zoneMapInstanceRef.current.resize();
+      }, 100);
+      const t2 = setTimeout(() => {
+        if (zoneMapInstanceRef.current) zoneMapInstanceRef.current.resize();
+      }, 300);
+      const t3 = setTimeout(() => {
+        if (zoneMapInstanceRef.current) zoneMapInstanceRef.current.resize();
+      }, 600);
+
+      return () => {
+        if (resizeObserver) resizeObserver.disconnect();
+        clearTimeout(t1);
+        clearTimeout(t2);
+        clearTimeout(t3);
+      };
     }
   }, [activePage, selectedZoneKey, zoneData]);
 
@@ -895,7 +1044,7 @@ export default function AdminPortal() {
               <div className="hardware-section-header">
                 <div className="hardware-header-left">
                   <h3 className="hardware-section-title">
-                    <span className="hw-icon">📡</span> Sensor Telemetry &amp; Hardware Diagnostics Fleet
+                    Sensor Telemetry &amp; Hardware Diagnostics Fleet
                   </h3>
                   <p className="hardware-section-subtitle">
                     Live operational telemetry, battery levels, RF signal strength, and raw register data across all deployed hardware nodes in {zoneData.name.split(' (')[0]}.
@@ -1043,7 +1192,7 @@ export default function AdminPortal() {
                             <td>
                               <div className="hw-battery-cell">
                                 <span className="battery-val">{node.battery}</span>
-                                <span className="battery-sub">{node.battery.includes('Solar') ? '⚡ Solar Active' : '🔋 Direct Cell'}</span>
+                                <span className="battery-sub">{node.battery.includes('Solar') ? 'Solar Active' : 'Direct Cell'}</span>
                               </div>
                             </td>
                             <td>
